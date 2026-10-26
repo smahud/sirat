@@ -1,0 +1,479 @@
+openapi: 3.1.0
+info:
+  title: SIRAT API
+  version: "1.0.0"
+  description: |
+    Sistem Informasi Registrasi & Arsip Surat — YAPSI Darussalam.
+    API backend SIRAT (Next.js Route Handlers) untuk autentikasi, unit/kepanitiaan,
+    profil penomoran, penerbitan surat atomik-idempotent, arsip berversi, audit,
+    health/integrity, import Excel dry-run, dan export CSV.
+    Spesifikasi mengacu pada PRD §14 + §21 dan Blueprint §16.
+  contact:
+    name: SIRAT Maintainer
+servers:
+  - url: http://127.0.0.1:3901
+    description: Local production
+  - url: https://sirat.yapsidarussalam.or.id
+    description: Public (via reverse proxy)
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sirat_session
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: VALIDATION }
+            message: { type: string, example: "Validasi gagal" }
+            correlationId: { type: string, format: uuid }
+            issues: { type: array, items: {} }
+    Letter:
+      type: object
+      properties:
+        id: { type: string }
+        issuingUnitId: { type: string }
+        committeeId: { type: string, nullable: true }
+        status: { type: string, enum: [DRAFT, ISSUED, CANCELLED] }
+        letterDate: { type: string, format: date, nullable: true }
+        issuedAt: { type: string, format: date-time, nullable: true }
+        sequence: { type: integer, nullable: true }
+        officialNumber: { type: string, nullable: true }
+        direction: { type: string, enum: [INTERNAL, EXTERNAL], nullable: true }
+        letterTypeId: { type: string, nullable: true }
+        recipient: { type: string, nullable: true }
+        subject: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+        cancelReason: { type: string, nullable: true }
+        legacyNumber: { type: string, nullable: true }
+        isImported: { type: boolean }
+        files: { type: array, items: {} }
+
+security:
+  - cookieAuth: []
+
+paths:
+  /api/auth/login:
+    post:
+      summary: Login (set cookie httpOnly)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        '200': { description: Login berhasil }
+        '401': { description: Kredensial salah }
+        '429': { description: Rate limit (5 percobaan / 10 menit) }
+
+  /api/auth/me:
+    get:
+      summary: Sesi saat ini
+      responses:
+        '200': { description: User aktif }
+        '401': { description: Belum login }
+
+  /api/auth/logout:
+    post:
+      summary: Logout (hapus cookie)
+      responses:
+        '200': { description: Berhasil }
+
+  /api/app-identity:
+    get:
+      summary: Identitas aplikasi
+      responses:
+        '200': { description: Identitas }
+    put:
+      summary: Update identitas (SYSTEM_ADMIN/ORG_ADMIN)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                ownerName: { type: string, nullable: true }
+                timezone: { type: string, default: Asia/Jakarta }
+                locale: { type: string, default: id-ID }
+
+  /api/units:
+    get:
+      summary: Daftar unit dalam scope user
+      responses: { '200': { description: OK } }
+    post:
+      summary: Buat unit (SYSTEM_ADMIN/ORG_ADMIN)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name]
+              properties:
+                code: { type: string }
+                name: { type: string }
+    patch:
+      summary: Update unit (status, code tampilan, nama)
+
+  /api/committees:
+    get: { summary: Daftar kepanitiaan dalam scope }
+    post:
+      summary: Buat kepanitiaan di bawah unit
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [unitId, code, name]
+              properties:
+                unitId: { type: string }
+                code: { type: string }
+                name: { type: string }
+                shareParentCounter: { type: boolean, default: false }
+    patch: { summary: Update committee (status, periode, shareParentCounter) }
+
+  /api/letter-types:
+    get: { summary: Daftar jenis surat }
+    post: { summary: Buat jenis surat (code unik, name) }
+    patch: { summary: Update jenis surat (deactivate via isActive=false) }
+
+  /api/numbering-profiles:
+    get: { summary: Daftar profil penomoran dalam scope }
+    post:
+      summary: Buat profil DRAFT untuk unit/committee
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, ownerId, dsl]
+              properties:
+                name: { type: string }
+                ownerId: { type: string, description: Unit ID }
+                committeeId: { type: string, nullable: true }
+                dsl:
+                  type: object
+                  description: NumberingDSL JSON (lihat lib/numbering/dsl.ts)
+    put: { summary: Update profil DRAFT (membuat version baru bila profil ACTIVE) }
+
+  /api/numbering-profiles/validate:
+    post:
+      summary: Validasi profil sebelum aktivasi (FR-006/007)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [dsl]
+              properties:
+                dsl: { type: object }
+      responses:
+        '200':
+          description: Hasil validasi
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  errors: { type: array, items: { type: string } }
+                  warnings: { type: array, items: { type: string } }
+                  example: { type: string }
+
+  /api/numbering-profiles/activate:
+    post:
+      summary: Aktivasi profil version (DRAFT→ACTIVE) + binding namespace
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [versionId, resetPolicy, dateSource]
+              properties:
+                versionId: { type: string }
+                resetPolicy: { type: string, enum: [ALL, YEARLY, MONTHLY] }
+                dateSource: { type: string, enum: [LETTER_DATE, ISSUE_DATE] }
+      responses:
+        '200': { description: Profil aktif }
+        '409': { description: Profil tidak valid atau sudah aktif }
+
+  /api/letters:
+    get:
+      summary: Daftar surat dalam scope (filter q, status, direction, dll)
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+        - in: query
+          name: unitId
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { type: string, enum: [DRAFT, ISSUED, CANCELLED] }
+        - in: query
+          name: direction
+          schema: { type: string, enum: [INTERNAL, EXTERNAL] }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+      responses: { '200': { description: List + total + page } }
+    post:
+      summary: Buat draft surat
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [issuingUnitId, direction, letterTypeId, letterDate]
+              properties:
+                issuingUnitId: { type: string }
+                committeeId: { type: string, nullable: true }
+                direction: { type: string, enum: [INTERNAL, EXTERNAL] }
+                letterTypeId: { type: string }
+                letterDate: { type: string, format: date }
+                recipient: { type: string }
+                subject: { type: string }
+                notes: { type: string }
+
+  /api/letters/preview:
+    get:
+      summary: Preview nomor (bukan reservasi — FR-009)
+      parameters:
+        - in: query
+          name: unitId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: committeeId
+          schema: { type: string }
+        - in: query
+          name: direction
+          schema: { type: string, enum: [INTERNAL, EXTERNAL] }
+        - in: query
+          name: letterTypeId
+          schema: { type: string }
+        - in: query
+          name: letterDate
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Preview number + parts + note
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  available: { type: boolean }
+                  previewNumber: { type: string }
+                  isEstimate: { type: boolean, default: true }
+                  note: { type: string, example: "Perkiraan nomor — bukan reservasi" }
+                  parts: { type: array, items: {} }
+
+  /api/letters/{id}:
+    get: { summary: Detail surat + files + versions + snapshot }
+    patch:
+      summary: Update metadata non-komponen (recipient, subject, notes)
+      description: |
+        Nomor resmi, tanggal, sequence, profile version, dan komponen nomor
+        tidak dapat diedit (Blueprint FR-030). Bila perlu mengubah, cancel +
+        reissue.
+
+  /api/letters/{id}/issue:
+    post:
+      summary: Terbitkan nomor surat (atomic + idempotent)
+      description: |
+        Transaksi tunggal: cek ulang assignment → idempotency key →
+        counter atomik → bangun nomor → registry unik → snapshot → audit →
+        commit. Tanpa file I/O dalam transaksi. Lihat ADR-004.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Issue berhasil (atau idempotent replay) }
+        '409':
+          description: |
+            Konflik — payload beda dengan key sama (IDEMPOTENCY_PAYLOAD_MISMATCH),
+            nomor sudah ada (NUMBER_CONFLICT), unit/committee tidak aktif,
+            atau status surat berubah race.
+        '422': { description: Validasi gagal }
+
+  /api/letters/{id}/cancel:
+    post:
+      summary: Pembatalan surat dengan alasan (FR-012)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        '200': { description: Surat dibatalkan; nomor tidak dipakai ulang }
+        '409': { description: Surat tidak ISSUED }
+
+  /api/letters/{id}/files:
+    post:
+      summary: Upload berkas arsip (stream ke staging → magic byte → atomic rename → READY)
+      parameters:
+        - in: header
+          name: x-file-name
+          required: true
+          schema: { type: string }
+        - in: header
+          name: x-file-label
+          schema: { type: string, enum: [original, attachment], default: original }
+        - in: header
+          name: x-replace-file-id
+          description: Bila ada, upload sebagai versi baru file existing
+          schema: { type: string }
+      requestBody:
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200': { description: Versi baru dengan state READY }
+        '413': { description: Ukuran melebihi SIRAT_MAX_FILE_BYTES }
+        '415': { description: Tipe tidak didukung (magic byte mismatch) }
+
+  /api/archive-versions/{id}/download:
+    get:
+      summary: Download berkas (stream, auth, audit, Content-Disposition attachment)
+      responses:
+        '200':
+          description: Stream file
+          headers:
+            Content-Disposition:
+              schema: { type: string, example: "attachment; filename=\"...\"" }
+            X-Content-Type-Options:
+              schema: { type: string, example: nosniff }
+        '403': { description: Tidak berhak }
+        '404': { description: Versi tidak READY / tidak ditemukan }
+
+  /api/archive-files/{id}/trash:
+    post: { summary: Soft delete file (ACTIVE→TRASHED) }
+  /api/archive-files/{id}/restore:
+    post: { summary: Restore (TRASHED→ACTIVE) }
+
+  /api/audit:
+    get:
+      summary: Daftar audit event (filter action, entityType, actorId, range tanggal)
+      parameters:
+        - in: query
+          name: action
+          schema: { type: string }
+        - in: query
+          name: entityType
+          schema: { type: string }
+      responses:
+        '200': { description: List audit event }
+
+  /api/health:
+    get:
+      summary: Status DB + storage + kapasitas + last backup
+      responses:
+        '200':
+          description: Health
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  db: { type: string }
+                  storage: { type: object }
+                  counters: { type: object }
+
+  /api/health/integrity-scan:
+    post:
+      summary: Pindai missing/orphan files (Blueprint FR-023/16.3)
+      responses:
+        '200':
+          description: Hasil scan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scanned: { type: integer }
+                  ok: { type: integer }
+                  missing: { type: array, items: {} }
+                  orphans: { type: array, items: {} }
+
+  /api/import/excel:
+    post:
+      summary: Upload + parse + classify Excel (dry-run, tidak menulis surat)
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+                targetUnitId: { type: string }
+      responses:
+        '200':
+          description: Batch created (status DRY_RUN) + report 66 kandidat + 33 praisi + anomali
+
+  /api/import/{batchId}/commit:
+    post:
+      summary: Commit selektif baris yang dipilih (FR-031)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rows:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      rowIndex: { type: integer }
+                      decision: { type: string, enum: [IMPORTED, SKIPPED] }
+                      legacyNumber: { type: string, nullable: true }
+
+  /api/export/letters.csv:
+    get:
+      summary: Export CSV surat (scope sama dengan search; sanitasi formula injection)
+      responses:
+        '200':
+          description: CSV stream
+          headers:
+            Content-Type:
+              schema: { type: string, example: "text/csv; charset=utf-8" }
+            Content-Disposition:
+              schema: { type: string, example: "attachment; filename=\"letters.csv\"" }
+
+  /api/users:
+    get: { summary: Daftar user (admin only) }
+    post: { summary: Buat user (admin only) }
+    patch: { summary: Update user (role, isActive, scope) }
+
+  /api/users/me/password:
+    post:
+      summary: Ganti password sendiri
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string, format: password }
+                newPassword: { type: string, format: password }

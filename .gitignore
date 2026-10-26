@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js build output
+.next/
+out/
+build/
+dist/
+
+# Production runtime (generated, not source)
+.next/standalone/
+.next/cache/
+
+# Environment & secrets
+.env
+.env.local
+.env.production
+.env.production.local
+*.pem
+*.key
+
+# Runtime data (generated at runtime, not source)
+/var/lib/sirat/
+/var/log/sirat/
+*.log
+next.log
+proxy.log
+
+# Uploads (user data, not source)
+uploads/
+document/
+
+# Tests
+coverage/
+*.lcov
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Misc
+*.tsbuildinfo
+next-env.d.ts

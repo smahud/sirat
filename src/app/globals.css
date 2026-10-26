@@ -1,0 +1,245 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ============================================================
+   SIRAT — Tema YAPSI Darussalam
+   Palet diselaraskan dengan yapsi-landing:
+   emerald #0d5c46 · emas #c9a227 · krem #faf9f4 · ink #1c2a25
+   ============================================================ */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-display: var(--font-display);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  /* Token merek YAPSI */
+  --color-gold: var(--gold);
+  --color-gold-dark: var(--gold-dark);
+  --color-gold-soft: var(--gold-soft);
+  --color-emerald-deep: var(--emerald-deep);
+  --color-emerald-darker: var(--emerald-darker);
+  --color-emerald-darkest: var(--emerald-darkest);
+  --color-emerald-light: var(--emerald-light);
+  --color-emerald-soft: var(--emerald-soft);
+  --color-ink: var(--ink);
+  --color-line: var(--line);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --shadow-card: var(--shadow-card);
+  --shadow-lift: var(--shadow-lift);
+}
+
+:root {
+  --radius: 0.75rem;
+
+  /* Font — pure CSS stack, aman untuk build offline (tanpa Google Fonts fetch) */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    "Noto Sans", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  --font-display: Georgia, "Times New Roman", "Noto Serif", serif;
+
+  /* Palet YAPSI */
+  --gold: #c9a227;
+  --gold-dark: #826714;
+  --gold-soft: #faf3da;
+  --emerald: #0d5c46;
+  --emerald-deep: #094536;
+  --emerald-darker: #062f25;
+  --emerald-darkest: #03251c;
+  --emerald-light: #17795c;
+  --emerald-soft: #e8f3ee;
+  --ink: #1c2a25;
+  --line: #e6e8e1;
+
+  /* Pemetaan shadcn */
+  --background: #faf9f4;
+  --foreground: #1c2a25;
+  --card: #ffffff;
+  --card-foreground: #1c2a25;
+  --popover: #ffffff;
+  --popover-foreground: #1c2a25;
+  --primary: #0d5c46;
+  --primary-foreground: #ffffff;
+  --secondary: #e8f3ee;
+  --secondary-foreground: #094536;
+  --muted: #f0f1ea;
+  --muted-foreground: #5b6b65;
+  --accent: #e8f3ee;
+  --accent-foreground: #094536;
+  --destructive: #b3261e;
+  --destructive-foreground: #ffffff;
+  --border: #e6e8e1;
+  --input: #dcded5;
+  --ring: #0d5c46;
+  --chart-1: #0d5c46;
+  --chart-2: #c9a227;
+  --chart-3: #17795c;
+  --chart-4: #5b8f7f;
+  --chart-5: #826714;
+
+  /* Sidebar: emerald pekat, aktif emas — elegan */
+  --sidebar: #062f25;
+  --sidebar-foreground: #d7e5de;
+  --sidebar-primary: #c9a227;
+  --sidebar-primary-foreground: #062f25;
+  --sidebar-accent: rgba(255, 255, 255, 0.07);
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: rgba(255, 255, 255, 0.09);
+  --sidebar-ring: #c9a227;
+
+  /* Bayangan yapsi-landing */
+  --shadow-card: 0 1px 2px #1c2a250d, 0 8px 24px -12px #1c2a252e;
+  --shadow-lift: 0 2px 4px #1c2a250f, 0 16px 40px -16px #1c2a2540;
+}
+
+.dark {
+  --background: #10201a;
+  --foreground: #eef2ee;
+  --card: #14281f;
+  --card-foreground: #eef2ee;
+  --popover: #14281f;
+  --popover-foreground: #eef2ee;
+  --primary: #2ea37a;
+  --primary-foreground: #062f25;
+  --secondary: #1a3a2c;
+  --secondary-foreground: #cfe5da;
+  --muted: #183325;
+  --muted-foreground: #9db5aa;
+  --accent: #1a3a2c;
+  --accent-foreground: #cfe5da;
+  --destructive: #e0574d;
+  --destructive-foreground: #ffffff;
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.16);
+  --ring: #2ea37a;
+  --chart-1: #2ea37a;
+  --chart-2: #d9b23c;
+  --chart-3: #5b8f7f;
+  --chart-4: #8fc7b2;
+  --chart-5: #b08d2a;
+  --sidebar: #0a1f18;
+  --sidebar-foreground: #c9dcd2;
+  --sidebar-primary: #d9b23c;
+  --sidebar-primary-foreground: #0a1f18;
+  --sidebar-accent: rgba(255, 255, 255, 0.07);
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: rgba(255, 255, 255, 0.09);
+  --sidebar-ring: #d9b23c;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "kern" 1, "liga" 1;
+  }
+  ::selection {
+    background: #c9a22733;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.015em;
+  }
+  .shadow-card {
+    box-shadow: var(--shadow-card);
+  }
+  .shadow-lift {
+    box-shadow: var(--shadow-lift);
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+  /* Motif geometris islami halus untuk panel brand */
+  .pattern-islami {
+    background-image:
+      radial-gradient(circle at 25% 25%, rgba(201, 162, 39, 0.16) 2px, transparent 2px),
+      radial-gradient(circle at 75% 75%, rgba(201, 162, 39, 0.1) 2px, transparent 2px),
+      linear-gradient(45deg, rgba(255, 255, 255, 0.028) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.028) 75%),
+      linear-gradient(45deg, rgba(255, 255, 255, 0.028) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.028) 75%);
+    background-size: 48px 48px, 48px 48px, 56px 56px, 56px 56px;
+    background-position: 0 0, 24px 24px, 0 0, 28px 28px;
+  }
+  .pattern-islami-soft {
+    background-image:
+      radial-gradient(circle at 25% 25%, rgba(13, 92, 70, 0.07) 1.5px, transparent 1.5px),
+      radial-gradient(circle at 75% 75%, rgba(201, 162, 39, 0.07) 1.5px, transparent 1.5px);
+    background-size: 36px 36px, 36px 36px;
+    background-position: 0 0, 18px 18px;
+  }
+  /* Scrollbar ramping */
+  .scrollbar-slim::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-slim::-webkit-scrollbar-thumb {
+    background: #c9cdc2;
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  .scrollbar-slim::-webkit-scrollbar-thumb:hover {
+    background: #a9aea0;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  .scrollbar-slim::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  /* Animasi masuk lembut */
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-rise {
+    animation: rise 0.45s cubic-bezier(0.22, 0.8, 0.3, 1) both;
+  }
+  @keyframes shine {
+    from { background-position: 200% center; }
+    to { background-position: -200% center; }
+  }
+}

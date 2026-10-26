@@ -1,0 +1,98 @@
+# SIRAT — Docker Compose production
+# Mengacu pada Master Prompt §10 + Blueprint §16.5.
+# Pada VPS target TIDAK dipakai (Docker belum terpasang, LiteSpeed sudah di port 80/443).
+# Disertakan untuk deployment alternatif di host lain.
+#
+# Usage:
+#   docker compose up -d
+#   docker compose exec app npx prisma migrate deploy
+#   docker compose exec app node scripts/bootstrap-admin.mjs
+
+services:
+  db:
+    image: postgres:15-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sirat
+      POSTGRES_USER: sirat
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      TZ: Asia/Jakarta
+    volumes:
+      - sirat-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sirat -d sirat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # JANGAN expose port ke internet (Blueprint §16.5)
+    # ports: ["5432:5432"]  # hanya untuk debugging; di-produksi biarkan internal
+
+  app:
+    build: .
+    image: sirat:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://sirat:${POSTGRES_PASSWORD}@db:5432/sirat?schema=public
+      NODE_ENV: production
+      PORT: 3901
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "127.0.0.1:3901:3901"   # reverse proxy di depan
+    volumes:
+      - sirat-archive:/var/lib/sirat/archive
+      - sirat-staging:/var/lib/sirat/staging
+    read_only: false  # Next.js standalone butuh write ke tmp; gunakan tmpfs bila ingin read-only
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3901/api/auth/me').then(r=>{if(r.status===401||r.status===200)process.exit(0);else process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # Reverse proxy opsional bila tidak pakai LiteSpeed existing.
+  # Pada VPS target, LiteSpeed yang sudah ada yang menangani TLS + proxy ke 127.0.0.1:3901.
+  # caddy:
+  #   image: caddy:2-bookworm
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy-data:/data
+  #     - caddy-config:/config
+  #   depends_on: [app]
+
+  # Backup job (fase lanjutan — saat ini manual via RUNBOOK)
+  # backup:
+  #   image: postgres:15-bookworm
+  #   restart: unless-stopped
+  #   environment:
+  #     PGPASSWORD: ${POSTGRES_PASSWORD}
+  #   volumes:
+  #     - ./backups:/backups
+  #     - sirat-archive:/archive:ro
+  #   entrypoint: /bin/sh
+  #   command:
+  #     - -c
+  #     - |
+  #       while true; do
+  #         TS=$$(date +%Y%m%d-%H%M%S)
+  #         pg_dump -h db -U sirat sirat > /backups/db-$$TS.dump
+  #         tar -czf /backups/archive-$$TS.tar.gz -C /archive .
+  #         find /backups -mtime +7 -delete
+  #         sleep 86400
+  #       done
+
+volumes:
+  sirat-db:
+  sirat-archive:
+  sirat-staging:
+  # caddy-data:
+  # caddy-config:

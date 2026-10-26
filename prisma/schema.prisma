@@ -1,0 +1,302 @@
+// SIRAT — Sistem Informasi Registrasi & Arsip Surat
+// Canonical schema (PostgreSQL, production).
+// Variant sqlite untuk dev sandbox: prisma/schema.sqlite.prisma (dibuat oleh scripts/make-sqlite-schema.sh)
+// Catatan: enum Prisma tidak dipakai demi kompatibilitas sqlite↔postgresql;
+// validasi nilai String dilakukan di layer aplikasi (zod).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model AppIdentity {
+  id        String   @id @default("app")
+  name      String
+  ownerName String?
+  timezone  String   @default("Asia/Jakarta")
+  locale    String   @default("id-ID")
+  updatedAt DateTime @updatedAt
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  fullName     String
+  email        String?
+  role         String   @default("OPERATOR") // SYSTEM_ADMIN|ORG_ADMIN|UNIT_ADMIN|COMMITTEE_ADMIN|OPERATOR|VIEWER|AUDITOR
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  assignments AccessAssignment[]
+  issued      Letter[]          @relation("LetterIssuer")
+}
+
+model Unit {
+  id         String    @id @default(cuid())
+  code       String    @unique
+  name       String
+  storageKey String    @unique // slug stabil; tidak berubah ketika code berubah
+  status     String    @default("ACTIVE") // ACTIVE|INACTIVE|ARCHIVED
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  committees Committee[]
+  assignments AccessAssignment[]
+  namespaces CounterNamespace[]
+  profiles  NumberingProfile[]
+  letters   Letter[]          @relation("IssuingUnit")
+}
+
+model Committee {
+  id         String    @id @default(cuid())
+  code       String
+  name       String
+  storageKey String    @unique
+  unitId     String
+  unit       Unit      @relation(fields: [unitId], references: [id])
+  startDate  DateTime?
+  endDate    DateTime?
+  status     String    @default("DRAFT") // DRAFT|ACTIVE|COMPLETED|ARCHIVED
+  shareParentCounter Boolean @default(false) // eksplisit: pakai counter unit parent
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  assignments AccessAssignment[]
+  profiles   NumberingProfile[]
+
+  @@unique([unitId, code])
+  letters    Letter[] @relation("LetterCommittee")
+}
+
+model AccessAssignment {
+  id                String    @id @default(cuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id])
+  unitId            String?
+  unit              Unit?     @relation(fields: [unitId], references: [id])
+  committeeId       String?
+  committee         Committee? @relation(fields: [committeeId], references: [id])
+  includeCommittees Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+
+  @@unique([userId, unitId, committeeId])
+}
+
+model LetterType {
+  id        String   @id @default(cuid())
+  code      String   @unique // snapshot dicetak saat terbit; perubahan kode hanya utk terbitan baru
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  letters   Letter[] @relation("LetterType")
+}
+
+model NumberingProfile {
+  id          String   @id @default(cuid())
+  name        String
+  ownerId     String
+  owner       Unit     @relation(fields: [ownerId], references: [id])
+  committeeId String?  @unique // null = profil unit; terisi = profil khusus kepanitiaan
+  committee   Committee? @relation(fields: [committeeId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  versions    NumberingProfileVersion[]
+}
+
+model NumberingProfileVersion {
+  id             String    @id @default(cuid())
+  profileId      String
+  profile        NumberingProfile @relation(fields: [profileId], references: [id])
+  version        Int
+  status         String    @default("DRAFT") // DRAFT|ACTIVE|RETIRED
+  dsl            String // JSON NumberingDSL
+  effectiveFrom  DateTime?
+  activatedAt    DateTime?
+  namespaceId    String?
+  namespace      CounterNamespace? @relation(fields: [namespaceId], references: [id])
+  letters        Letter[] @relation("LetterProfile")
+  createdAt      DateTime  @default(now())
+
+  @@unique([profileId, version])
+}
+
+model CounterNamespace {
+  id           String   @id @default(cuid())
+  name         String
+  unitId       String?
+  unit         Unit?    @relation(fields: [unitId], references: [id])
+  committeeId  String?
+  resetPolicy  String   @default("ALL") // ALL|YEARLY|MONTHLY
+  dateSource   String   @default("LETTER_DATE") // LETTER_DATE|ISSUE_DATE
+  createdAt    DateTime @default(now())
+
+  counters     Counter[]
+  profileVersions NumberingProfileVersion[]
+  letters      Letter[] @relation("LetterNamespace")
+
+  @@unique([unitId, committeeId, name])
+}
+
+model Counter {
+  id          String           @id @default(cuid())
+  namespaceId String
+  namespace   CounterNamespace @relation(fields: [namespaceId], references: [id])
+  periodKey   String           @default("ALL")
+  lastValue   Int              @default(0)
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([namespaceId, periodKey])
+}
+
+model Letter {
+  id              String    @id @default(cuid())
+  issuingUnitId   String
+  issuingUnit     Unit      @relation("IssuingUnit", fields: [issuingUnitId], references: [id])
+  committeeId     String?
+  status          String    @default("DRAFT") // DRAFT|ISSUED|CANCELLED
+  letterDate      DateTime? // DATE semantics (midnight UTC)
+  issuedAt        DateTime?
+  issuerId        String?
+  issuer          User?     @relation("LetterIssuer", fields: [issuerId], references: [id])
+  sequence        Int? // null untuk draft/import tanpa alokasi baru
+  namespaceId     String?
+  namespace       CounterNamespace? @relation("LetterNamespace", fields: [namespaceId], references: [id])
+  periodKey       String?
+  officialNumber  String?
+  normalizedNumber String? // canonical uppercase utk deteksi tabrakan; unique (null utk draft)
+  profileVersionId String?
+  profileVersion  NumberingProfileVersion? @relation("LetterProfile", fields: [profileVersionId], references: [id])
+  numberSnapshot  String? // JSON: komponen, input, kode saat terbit
+  direction       String? // INTERNAL|EXTERNAL
+  letterTypeId    String?
+  letterType      LetterType? @relation("LetterType", fields: [letterTypeId], references: [id])
+  committee       Committee? @relation("LetterCommittee", fields: [committeeId], references: [id])
+  recipient       String?
+  subject         String?
+  notes           String?
+  cancelReason    String?
+  cancelledAt     DateTime?
+  cancelledBy     String?
+  legacyNumber    String? // nomor persis hasil import
+  isImported      Boolean   @default(false)
+  importedAt      DateTime?
+  sourceRef       String? // sourceHash/sheet/row
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  files           ArchiveFile[]
+
+  @@unique([namespaceId, periodKey, sequence])
+}
+
+model NumberRegistry {
+  id        String   @id @default(cuid())
+  number    String   @unique // normalized
+  letterId  String
+  createdAt DateTime @default(now())
+}
+
+model IdempotencyKey {
+  id          String   @id @default(cuid())
+  actorId     String
+  operation   String
+  key         String
+  payloadHash String
+  letterId   String?
+  createdAt   DateTime  @default(now())
+
+  @@unique([actorId, operation, key])
+}
+
+model ArchiveFile {
+  id        String   @id @default(cuid())
+  letterId  String
+  letter    Letter   @relation(fields: [letterId], references: [id])
+  label     String   @default("original") // original|attachment
+  state     String   @default("ACTIVE") // ACTIVE|TRASHED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  versions  ArchiveVersion[]
+}
+
+model ArchiveVersion {
+  id            String      @id @default(cuid())
+  archiveFileId String
+  archiveFile   ArchiveFile  @relation(fields: [archiveFileId], references: [id])
+  versionNo     Int
+  state         String      @default("PENDING") // PENDING|READY|FAILED
+  objectKey     String      @unique
+  originalName  String
+  sizeBytes     Int
+  mimeType      String
+  sha256       String
+  uploaderId   String
+  createdAt     DateTime    @default(now())
+  isCurrent     Boolean     @default(true)
+
+  @@unique([archiveFileId, versionNo])
+}
+
+model AuditEvent {
+  id            String   @id @default(cuid())
+  actorId       String?
+  action        String
+  entityType    String?
+  entityId      String?
+  outcome       String   @default("SUCCESS")
+  correlationId String?
+  metadata      String? // JSON tanpa secret
+  createdAt     DateTime @default(now())
+}
+
+model StorageBackend {
+  id          String   @id @default(cuid())
+  kind        String   @default("LOCAL")
+  label       String   @unique
+  rootPath    String
+  isActive    Boolean  @default(false)
+  testStatus  String? // JSON hasil test connection terakhir
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model ImportBatch {
+  id         String    @id @default(cuid())
+  sourceHash String
+  fileName   String
+  sheet      String
+  status     String    @default("DRY_RUN") // DRY_RUN|COMMITTED
+  report     String? // JSON ringkasan
+  targetUnitId String?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  committedAt DateTime?
+
+  rows       ImportRow[]
+}
+
+model ImportRow {
+  id          String   @id @default(cuid())
+  batchId     String
+  batch       ImportBatch @relation(fields: [batchId], references: [id])
+  sheet       String
+  rowIndex    Int
+  sourceHash  String
+  rawNumber   String?
+  status      String   @default("CANDIDATE") // CANDIDATE|NEEDS_REVIEW|ACCEPTED|SKIPPED|ERROR|IMPORTED|PRAISI
+  data        String // JSON input mentah
+  issues      String? // JSON peringatan
+  letterId    String?
+
+  @@unique([sourceHash, sheet, rowIndex])
+}
