@@ -35,8 +35,8 @@ Tujuh role dipertahankan (master prompt lanjutan A.2: penyederhanaan bersifat re
 |---|---|---|---|
 | `SYSTEM_ADMIN` | Administrator Sistem (Super Admin) | Global | Semua permission (`*`), termasuk Full Backup & **Full Restore** |
 | `ORG_ADMIN` | Admin Organisasi | Global | Master data + Full Backup; **tanpa** restore |
-| `UNIT_ADMIN` | Admin Unit / Departemen | Unit yang di-assign | Kelola user/panitia/profil di unitnya; surat unitnya |
-| `COMMITTEE_ADMIN` | Admin Kepanitiaan | Panitia yang di-assign | Kelola user/profil panitianya; surat panitianya |
+| `UNIT_ADMIN` | Admin Unit / Departemen | Unit yang di-assign | Kelola user/panitia di unitnya; surat unitnya; **profil penomoran dikelola pusat sejak v1.5** |
+| `COMMITTEE_ADMIN` | Admin Kepanitiaan | Panitia yang di-assign | Kelola user panitianya; surat panitianya |
 | `OPERATOR` | Operator / Petugas | Sesuai assignment | Buat/terbit surat, unggah arsip |
 | `VIEWER` | Pengamat | Sesuai assignment | Baca-saja + unduh arsip |
 | `AUDITOR` | Auditor | Global (baca) | Baca semua surat + audit trail |
@@ -44,6 +44,7 @@ Tujuh role dipertahankan (master prompt lanjutan A.2: penyederhanaan bersifat re
 ### 2.1 Yang TIDAK otomatis dimiliki Admin Unit (anti-asumsi)
 
 - `unit.manage` — membuat/mengubah unit hanya Super Admin/Org Admin.
+- `profile.manage` — **sejak v1.5 profil penomoran dikelola pusat** (kebijakan organisasi). Menu *Profil Nomor* tidak muncul untuk Admin Unit ke bawah; `GET /api/numbering-profiles` menolak 403.
 - `audit.view` — AuditEvent tidak ber-scope; menampilkannya ke admin unit = kebocoran lintas scope.
 - `storage.manage` — storage bersifat global.
 - `backup.export` / `backup.restore` — **dua permission terpisah**, tidak otomatis untuk role apa pun selain otoritas global; diberikan per scope lewat **Hak Akses Backup** (BackupGrant).
@@ -59,6 +60,8 @@ Tujuh role dipertahankan (master prompt lanjutan A.2: penyederhanaan bersifat re
 | Operator MI dengan `includeCommittees=false` membuat surat panitia MI | **403** — wajib flag eksplisit |
 | VIEWER mengedit metadata surat via PATCH | **403** — `letter.create`/`letter.cancel` tidak dimiliki VIEWER |
 | Admin MI memberi role ORG_ADMIN ke user baru | **403 ESCALATION** — bukan subset permissionnya |
+| Admin MI meng-import surat ke unit MTs (API langsung) | **403 FORBIDDEN** — target import divalidasi `canManageUnit` di backend (v1.5) |
+| Admin MI membuka menu/API Profil Nomor | **403 + menu tersembunyi** — `profile.manage` hanya pusat (v1.5) |
 
 ## 3. Permission efektif
 

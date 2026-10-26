@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSession, hasPerm, Me } from './use-session'
 import { LoginView } from './login-view'
 import { DashboardView } from './dashboard-view'
@@ -44,8 +44,14 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: 'Organisasi',
     items: [
-      { key: 'units', label: 'Unit & Panitia', icon: Building2, perm: 'letter.view' },
-      { key: 'profiles', label: 'Profil Nomor', icon: SlidersHorizontal, perm: 'letter.view' },
+      // v1.5: menu = fungsi utamanya. Master data unit/panitia adalah fungsi
+      // manajemen (committee.manage) — OPERATOR/VIEWER tidak perlu melihatnya
+      // (nama unit tetap muncul di konteks surat melalui dropdown ter-scope).
+      { key: 'units', label: 'Unit & Panitia', icon: Building2, perm: 'committee.manage' },
+      // v1.5: profil penomoran = kebijakan pusat (profile.manage). Admin unit
+      // ke bawah tidak punya akses — menu tidak dimunculkan sama sekali
+      // (GET /api/numbering-profiles juga menolak 403).
+      { key: 'profiles', label: 'Profil Nomor', icon: SlidersHorizontal, perm: 'profile.manage' },
       { key: 'lettertypes', label: 'Jenis Surat', icon: FileStack, perm: 'lettertype.manage' },
       { key: 'users', label: 'Pengguna', icon: Users, perm: 'user.manage' },
     ],
@@ -56,16 +62,45 @@ const NAV_SECTIONS: NavSection[] = [
       { key: 'backup', label: 'Backup & Restore', icon: DatabaseBackup },
       { key: 'audit', label: 'Audit', icon: ScrollText, perm: 'audit.view' },
       { key: 'health', label: 'Kesehatan', icon: HeartPulse, perm: 'health.view' },
-      { key: 'import', label: 'Import Excel', icon: FileSpreadsheet, perm: 'import.manage' },
+      { key: 'import', label: 'Import Data', icon: FileSpreadsheet, perm: 'import.manage' },
       { key: 'settings', label: 'Pengaturan', icon: Settings },
     ],
   },
 ]
 
+// Persyaratan permission per view — cermin NAV_SECTIONS (v1.5).
+// Dipakai guard di bawah: bila sesi berganti user dgn hak lebih rendah
+// (logout → login), view yang tertinggal otomatis dialihkan ke Dashboard
+// agar komponen terlindungi tidak pernah ter-render untuk yang tak berwenang.
+const VIEW_PERMS: Partial<Record<ViewKey, string>> = {
+  letters: 'letter.view',
+  units: 'committee.manage',
+  profiles: 'profile.manage',
+  lettertypes: 'lettertype.manage',
+  users: 'user.manage',
+  audit: 'audit.view',
+  health: 'health.view',
+  import: 'import.manage',
+}
+
 export function AppShell() {
   const { me, loading, login, logout, refresh } = useSession()
   const [view, setView] = useState<ViewKey>('dashboard')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  // Guard: view aktif wajib didukung permission user saat ini (mis. sesi berganti
+  // ke user dengan hak lebih rendah). API tetap menjadi batas keamanan utama —
+  // ini mencegah komponen/aksi UI tak berwenang tampil sekali pun sekilas.
+  useEffect(() => {
+    if (!me) return
+    if (view === 'backup') {
+      const ok = !!me.backup && (me.backup.canExportAny || me.backup.canRestoreAny)
+      if (!ok) setView('dashboard')
+      return
+    }
+    const perm = VIEW_PERMS[view]
+    if (perm && !hasPerm(me.permissions, perm)) setView('dashboard')
+  }, [me, view])
 
   if (loading) {
     return (
@@ -186,7 +221,7 @@ export function AppShell() {
             </Button>
           </div>
           <p className="mt-2.5 text-center text-[10px] text-white/30">
-            YAPSI Darussalam · v1.3
+            YAPSI Darussalam · v1.5
           </p>
         </div>
       </aside>
@@ -260,8 +295,8 @@ function MainContent({ view, me, onProfileUpdated }: { view: ViewKey; me: Me; on
     case 'backup': return <BackupView me={me} />
     case 'audit': return <AuditView />
     case 'health': return <HealthView />
-    case 'import': return <ImportView />
+    case 'import': return <ImportView me={me} />
     case 'settings': return <SettingsView me={me.user} onProfileUpdated={onProfileUpdated} />
-    default: return <DashboardView />
+    default: return <DashboardView me={me} />
   }
 }

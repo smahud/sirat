@@ -26,8 +26,13 @@ const OPERATOR_PERMS: Permission[] = [
 // audit.view dicabut dari UNIT_ADMIN/COMMITTEE_ADMIN: AuditEvent tidak punya kolom scope,
 // sehingga menampilkan trail global ke admin unit = kebocoran informasi lintas scope
 // (least privilege / deny by default). Audit hanya untuk role global.
+//
+// profile.manage juga dicabut dari UNIT_ADMIN/COMMITTEE_ADMIN (kebijakan pusat v1.5):
+// profil penomoran adalah kebijakan organisasi yang dikelola pusat (SYSTEM_ADMIN/ORG_ADMIN).
+// Admin unit ke bawah tidak memiliki akses — bahkan menu "Profil Nomor" tidak dimunculkan,
+// dan GET /api/numbering-profiles menolak dengan 403 (deny by default).
 const UNIT_ADMIN_PERMS: Permission[] = [
-  'committee.manage', 'user.manage', 'profile.manage', 'lettertype.manage',
+  'committee.manage', 'user.manage', 'lettertype.manage',
   ...OPERATOR_PERMS, 'letter.cancel', 'archive.trash', 'archive.restore',
   'import.manage', 'export.run', 'health.view',
 ]

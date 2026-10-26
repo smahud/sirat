@@ -12,7 +12,7 @@ RBAC scoped (Blueprint §9 + §16.5, NFR-002). Permission dihitung dari
 | committee.manage      | ✅ | ✅ | ✅* | ✅* | — | — | — |
 | user.manage           | ✅ | ✅ | ✅* | ✅* | — | — | — |
 | lettertype.manage     | ✅ | ✅ | ✅* | ✅* | — | — | — |
-| profile.manage        | ✅ | ✅ | ✅* | ✅* | — | — | — |
+| profile.manage        | ✅ | ✅ | — | — | — | — | — |
 | storage.manage        | ✅ | ✅ | — | — | — | — | — |
 | letter.view           | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | letter.create         | ✅ | — | ✅ | ✅ | ✅ | — | — |
@@ -31,6 +31,13 @@ RBAC scoped (Blueprint §9 + §16.5, NFR-002). Permission dihitung dari
 
 \* = terbatas scope unit/committee yang di-assign. SYSTEM_ADMIN punya `*`
 
+> **Perubahan v1.5 — profil penomoran dikelola pusat:** `profile.manage`
+> dicabut dari UNIT_ADMIN dan COMMITTEE_ADMIN. Menu **Profil Nomor** hanya
+> muncul bagi SYSTEM_ADMIN/ORG_ADMIN; `GET /api/numbering-profiles` menolak
+> 403 untuk role lain (deny by default). Alasan: profil penomoran adalah
+> kebijakan organisasi (bentuk nomor resmi) — konsisten dengan jenis surat
+> yang juga dikelola pusat.
+
 ## Backup per scope (master prompt lanjutan B.1)
 
 `backup.export` / `backup.restore` **tidak otomatis** untuk Admin Unit/Committee —
@@ -46,6 +53,19 @@ dua permission terpisah yang diberikan eksplisit per scope melalui tabel `Backup
 
 Pencabutan grant langsung efektif (kapabilitas di-resolve per request dari DB).
 (wildcard semua permission).
+
+> **Perubahan v1.5 — visibilitas menu = fungsi menu:** menu yang tidak
+> diiringi permission tidak dimunculkan sama sekali (bukan sekadar disabled):
+> - *Unit & Panitia* → `committee.manage` (OPERATOR/VIEWER/AUDITOR tidak melihat).
+> - *Profil Nomor* → `profile.manage` (admin unit ke bawah tidak melihat).
+> - *Import Data* → `import.manage`.
+> Dashboard menyesuaikan: tanpa `health.view`, statistik menampilkan surat
+> dalam scope user (bukan memanggil /api/health yang pasti 403).
+
+> **Perubahan v1.5 — scope target import:** `POST /api/import/:batchId/commit`
+> memvalidasi `canManageUnit(user, targetUnitId)` di backend. Role global boleh
+> ke unit mana pun; UNIT_ADMIN hanya unit assignment-nya. Filtering frontend
+> bukan batas keamanan — backend selalu memvalidasi ulang.
 
 > **Perubahan audit trail (v1.2):** `audit.view` dicabut dari UNIT_ADMIN dan
 > COMMITTEE_ADMIN. `AuditEvent` tidak memiliki kolom scope sehingga trail bersifat
@@ -82,9 +102,9 @@ validasi ulang konteks penerbitan:
   atas wewenangnya (PATCH /api/users).
 - **Delegasi terikat scope pengelolaan**: admin unit hanya bisa membuat/mengubah
   user dengan assignment pada unit/committee yang dikelolanya
-  (`assertAssignmentsInScope`), membuat committee di unitnya
-  (`canManageUnit`), dan membuat/mengaktifkan profil penomoran untuk konteks
-  yang dikelolanya (`canManageUnit` / `canManageCommittee`).
+  (`assertAssignmentsInScope`) dan membuat committee di unitnya
+  (`canManageUnit`). Profil penomoran sejak v1.5 dikelola pusat — admin unit
+  tidak lagi bisa membuat/mengaktivasi profil (lihat catatan di atas).
 
 ## Filter prisma (lib/rbac.ts)
 

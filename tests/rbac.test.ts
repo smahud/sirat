@@ -33,6 +33,26 @@ describe('RBAC — permission per role (deny by default)', () => {
     expect(ROLE_PERMISSIONS.UNIT_ADMIN).not.toContain('audit.view')
     expect(ROLE_PERMISSIONS.COMMITTEE_ADMIN).not.toContain('audit.view')
   })
+  it('v1.5: profile.manage hanya pusat — UNIT_ADMIN/COMMITTEE_ADMIN/OPERATOR/VIEWER/AUDITOR tidak memiliki (menu Profil Nomor tidak muncul)', () => {
+    expect(ROLE_PERMISSIONS.SYSTEM_ADMIN).toBe('*')
+    expect(ROLE_PERMISSIONS.ORG_ADMIN).toContain('profile.manage')
+    expect(ROLE_PERMISSIONS.UNIT_ADMIN).not.toContain('profile.manage')
+    expect(ROLE_PERMISSIONS.COMMITTEE_ADMIN).not.toContain('profile.manage')
+    expect(ROLE_PERMISSIONS.OPERATOR).not.toContain('profile.manage')
+    expect(ROLE_PERMISSIONS.VIEWER).not.toContain('profile.manage')
+    expect(ROLE_PERMISSIONS.AUDITOR).not.toContain('profile.manage')
+  })
+  it('v1.5: import/manage menu — UNIT_ADMIN boleh, OPERATOR/VIEWER/AUDITOR tidak', () => {
+    expect(ROLE_PERMISSIONS.UNIT_ADMIN).toContain('import.manage')
+    expect(ROLE_PERMISSIONS.OPERATOR).not.toContain('import.manage')
+    expect(ROLE_PERMISSIONS.VIEWER).not.toContain('import.manage')
+    expect(ROLE_PERMISSIONS.AUDITOR).not.toContain('import.manage')
+  })
+  it('v1.5: menu Unit & Panitia = committee.manage — OPERATOR/VIEWER/AUDITOR tidak melihat menu', () => {
+    expect(ROLE_PERMISSIONS.OPERATOR).not.toContain('committee.manage')
+    expect(ROLE_PERMISSIONS.VIEWER).not.toContain('committee.manage')
+    expect(ROLE_PERMISSIONS.AUDITOR).not.toContain('committee.manage')
+  })
   it('role global (ORG_ADMIN, AUDITOR) tetap melihat audit', () => {
     expect(ROLE_PERMISSIONS.ORG_ADMIN).toContain('audit.view')
     expect(ROLE_PERMISSIONS.AUDITOR).toContain('audit.view')

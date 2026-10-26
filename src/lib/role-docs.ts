@@ -82,14 +82,14 @@ export const ROLE_DOCS: Record<Role, RoleDoc> = {
     functions: [
       'Mengelola kepanitiaan di bawah unit yang dikelolanya',
       'Mengelola pengguna & assignment pada unitnya (subset permission)',
-      'Mengelola profil penomoran unit/kepanitiaannya',
       'Membuat, menerbitkan, dan membatalkan surat pada unitnya',
-      'Import Excel dan export data unitnya',
+      'Import data dan export data unitnya (target import dibatasi unit yang dikelolanya)',
     ],
     scopeSummary:
       'Hanya unit yang ditugaskan. Tidak otomatis global, tidak otomatis mengelola unit lain, dan tidak otomatis melihat audit trail global.',
     notGranted: [
       'unit.manage — tidak dapat membuat/mengubah unit (hanya Super Admin/Org Admin)',
+      'profile.manage — profil penomoran adalah kebijakan pusat; menu Profil Nomor tidak muncul untuk Admin Unit ke bawah',
       'audit.view — trail global tidak bisa dibatasi per scope',
       'storage.manage — pengelolaan storage bersifat global',
       'backup.export / backup.restore — TIDAK otomatis; harus diberikan eksplisit per unit/kepanitiaan lewat Hak Akses Backup',
@@ -112,13 +112,13 @@ export const ROLE_DOCS: Record<Role, RoleDoc> = {
       'Pengelola administrasi pada kepanitiaan yang ditugaskan. Cocok untuk sekretariat panitia (HUT, panitia acara, dsb.) tanpa membuka akses surat reguler unit induk.',
     functions: [
       'Mengelola pengguna & assignment untuk kepanitiaannya',
-      'Mengelola profil penomoran kepanitiaannya',
       'Membuat, menerbitkan, dan membatalkan surat kepanitiaannya',
     ],
     scopeSummary:
       'Hanya kepanitiaan yang ditugaskan. Tidak dapat mengelola unit induk dan tidak otomatis mengakses kepanitiaan lain.',
     notGranted: [
       'unit.manage dan pengelolaan unit induk',
+      'profile.manage — profil penomoran dikelola pusat; menu Profil Nomor tidak muncul',
       'audit.view, storage.manage',
       'backup.export / backup.restore — harus diberikan eksplisit per kepanitiaan',
     ],

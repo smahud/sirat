@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { apiGet, apiPost, apiPut } from '@/lib/client'
+import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from '@/lib/client'
 import { PageHeader, EmptyState } from './ui-bits'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,7 +12,10 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { ArrowDown, ArrowUp, Plus, Trash2, SlidersHorizontal, Hash, CheckCircle2, Info } from 'lucide-react'
+import {
+  ArrowDown, ArrowUp, Plus, Trash2, Pencil, SlidersHorizontal, Hash, CheckCircle2, Info,
+  Layers, ShieldCheck,
+} from 'lucide-react'
 import type { NumberingDSL, DSLComponent } from '@/lib/numbering/dsl'
 
 interface ProfileRow {
@@ -25,10 +28,20 @@ interface ProfileRow {
 }
 interface UnitRow { id: string; code: string; name: string }
 
+/** Konteks builder: buat profil baru, edit draft, atau turunkan versi baru. */
+interface BuilderCtx {
+  mode: 'create' | 'draft' | 'new-version'
+  profileId?: string
+  name?: string
+  initialDsl?: NumberingDSL
+}
+
 export function ProfilesView() {
   const qc = useQueryClient()
-  const [builderOpen, setBuilderOpen] = useState(false)
+  const [builder, setBuilder] = useState<BuilderCtx | null>(null)
   const [activateVersion, setActivateVersion] = useState<ProfileRow['versions'][0] | null>(null)
+  const [renameProfile, setRenameProfile] = useState<ProfileRow | null>(null)
+  const [deleteProfile, setDeleteProfile] = useState<ProfileRow | null>(null)
 
   const profiles = useQuery({ queryKey: ['profiles'], queryFn: () => apiGet<{ profiles: ProfileRow[] }>('/api/numbering-profiles') })
   const units = useQuery({ queryKey: ['units'], queryFn: () => apiGet<{ units: UnitRow[] }>('/api/units') })
@@ -48,12 +61,22 @@ export function ProfilesView() {
     <div>
       <PageHeader
         title="Profil Nomor"
-        description="Format nomor per unit/kepanitiaan. Versi yang sudah aktif immutable — perubahan berarti versi baru."
+        description="Format nomor surat per unit/kepanitiaan — dikelola pusat sebagai kebijakan organisasi. Versi yang sudah aktif immutable; setiap perubahan berarti versi baru."
       >
-        <Button onClick={() => setBuilderOpen(true)} className="shadow-card">
+        <Button onClick={() => setBuilder({ mode: 'create' })} className="shadow-card">
           <Plus className="w-4 h-4 mr-1.5" /> Profil Baru
         </Button>
       </PageHeader>
+
+      <div className="rounded-xl border border-emerald/25 bg-emerald-soft/40 p-4 mb-5 flex gap-3.5">
+        <ShieldCheck className="w-[18px] h-[18px] text-emerald shrink-0 mt-0.5" />
+        <p className="text-[12.5px] leading-relaxed text-foreground/80">
+          <span className="font-semibold text-emerald-deep">Menu khusus pusat.</span> Profil penomoran menentukan bentuk
+          nomor resmi seluruh surat organisasi, sehingga hanya Admin Organisasi/Sistem yang berhak mengelolanya.
+          Admin unit ke bawah tidak melihat menu ini. Perubahan pada versi yang sudah aktif selalu dibuat sebagai
+          <span className="font-semibold"> versi baru</span> — histori nomor surat lama tidak pernah berubah.
+        </p>
+      </div>
 
       {profiles.data?.profiles.length === 0 && (
         <Card className="shadow-card">
@@ -63,7 +86,7 @@ export function ProfilesView() {
               title="Belum ada profil penomoran"
               description="Buat profil untuk unit — misalnya preset workbook 2026 untuk YAPSI: 001/A/SR/YAPSI-DS/X/2026."
             >
-              <Button onClick={() => setBuilderOpen(true)} className="shadow-card">
+              <Button onClick={() => setBuilder({ mode: 'create' })} className="shadow-card">
                 <Plus className="w-4 h-4 mr-1.5" /> Buat Profil Pertama
               </Button>
             </EmptyState>
@@ -71,64 +94,106 @@ export function ProfilesView() {
         </Card>
       )}
 
-      {profiles.data?.profiles.map((p) => (
-        <Card key={p.id} className="shadow-card mb-4">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-[15px] font-semibold flex flex-wrap items-center gap-2.5">
-              <span className="w-8 h-8 rounded-lg bg-emerald-soft text-emerald flex items-center justify-center">
-                <SlidersHorizontal className="w-4 h-4" />
-              </span>
-              {p.name}
-              <Badge variant="outline" className="font-medium text-[11px]">
-                {p.committee ? `Panitia ${p.committee.code}` : `Unit ${p.owner.code}`}
-              </Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2.5">
-            {p.versions.map((v) => {
-              const dsl = JSON.parse(v.dsl) as NumberingDSL
-              const sample = dsl.components.map(c => componentLabel(c)).join(dsl.separator)
-              const isActive = v.status === 'ACTIVE'
-              return (
-                <div
-                  key={v.id}
-                  className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4 transition-colors ${isActive ? 'border-emerald/30 bg-emerald-soft/40' : 'bg-surface'}`}
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`font-mono text-[12px] font-semibold px-2.5 py-1 rounded-md ${isActive ? 'bg-emerald text-white' : 'bg-muted'}`}>
-                        {sample}
-                      </span>
-                      <Badge
-                        variant="outline"
-                        className={`text-[11px] font-semibold ${isActive ? 'border-emerald/40 text-emerald-deep' : ''}`}
-                      >
-                        v{v.version} · {versionStatusLabel(v.status)}
-                      </Badge>
-                      {isActive && <CheckCircle2 className="w-4 h-4 text-emerald" />}
+      {profiles.data?.profiles.map((p) => {
+        const latest = p.versions[0]
+        const hasOpenDraft = latest?.status === 'DRAFT'
+        return (
+          <Card key={p.id} className="shadow-card mb-4">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-[15px] font-semibold flex flex-wrap items-center gap-2.5">
+                <span className="w-8 h-8 rounded-lg bg-emerald-soft text-emerald flex items-center justify-center">
+                  <SlidersHorizontal className="w-4 h-4" />
+                </span>
+                <span className="truncate max-w-xs" title={p.name}>{p.name}</span>
+                <Badge variant="outline" className="font-medium text-[11px]">
+                  {p.committee ? `Panitia ${p.committee.code}` : `Unit ${p.owner.code}`}
+                </Badge>
+                <span className="ml-auto flex items-center gap-1.5">
+                  <Button size="icon" variant="ghost" className="h-8 w-8" title="Ubah nama profil"
+                    onClick={() => setRenameProfile(p)} aria-label="Ubah nama profil">
+                    <Pencil className="w-4 h-4" />
+                  </Button>
+                  <Button size="icon" variant="ghost" className="h-8 w-8" title="Buat versi baru dari profil ini"
+                    onClick={() => {
+                      const active = p.versions.find(v => v.status === 'ACTIVE') ?? latest
+                      setBuilder({
+                        mode: 'new-version', profileId: p.id, name: p.name,
+                        initialDsl: active ? JSON.parse(active.dsl) as NumberingDSL : undefined,
+                      })
+                    }} aria-label="Buat versi baru">
+                    <Layers className="w-4 h-4" />
+                  </Button>
+                  <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive hover:bg-red-50"
+                    title="Hapus profil" onClick={() => setDeleteProfile(p)} aria-label="Hapus profil">
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2.5">
+              {p.versions.map((v) => {
+                const dsl = JSON.parse(v.dsl) as NumberingDSL
+                const sample = dsl.components.map(c => componentLabel(c)).join(dsl.separator)
+                const isActive = v.status === 'ACTIVE'
+                const isDraft = v.status === 'DRAFT'
+                const isLatest = v.id === latest?.id
+                return (
+                  <div
+                    key={v.id}
+                    className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4 transition-colors ${isActive ? 'border-emerald/30 bg-emerald-soft/40' : 'bg-surface'}`}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`font-mono text-[12px] font-semibold px-2.5 py-1 rounded-md ${isActive ? 'bg-emerald text-white' : 'bg-muted'}`}>
+                          {sample}
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className={`text-[11px] font-semibold ${isActive ? 'border-emerald/40 text-emerald-deep' : ''}`}
+                        >
+                          v{v.version} · {versionStatusLabel(v.status)}
+                        </Badge>
+                        {isActive && <CheckCircle2 className="w-4 h-4 text-emerald" />}
+                      </div>
+                      <p className="text-[11.5px] text-muted-foreground mt-1.5">
+                        {dsl.components.length} komponen · separator “{dsl.separator}”
+                        {v.activatedAt ? ` · aktif sejak ${new Date(v.activatedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}` : ''}
+                      </p>
                     </div>
-                    <p className="text-[11.5px] text-muted-foreground mt-1.5">
-                      {dsl.components.length} komponen · separator “{dsl.separator}”
-                      {v.activatedAt ? ` · aktif sejak ${new Date(v.activatedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}` : ''}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      {isDraft && isLatest && (
+                        <Button size="sm" variant="outline" className="bg-surface h-8"
+                          onClick={() => setBuilder({
+                            mode: 'draft', profileId: p.id, name: p.name,
+                            initialDsl: dsl,
+                          })}>
+                          <Pencil className="w-3.5 h-3.5 mr-1" /> Edit Draft
+                        </Button>
+                      )}
+                      {isDraft && (
+                        <Button size="sm" className="shadow-card h-8" onClick={() => setActivateVersion(v)}>
+                          Aktivasi…
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                  {v.status === 'DRAFT' && (
-                    <Button size="sm" className="shadow-card h-8" onClick={() => setActivateVersion(v)}>
-                      Aktivasi…
-                    </Button>
-                  )}
-                </div>
-              )
-            })}
-          </CardContent>
-        </Card>
-      ))}
+                )
+              })}
+              {!hasOpenDraft && (
+                <p className="text-[11.5px] text-muted-foreground pl-1">
+                  Tidak ada draft terbuka — gunakan tombol <span className="font-semibold inline-flex items-center gap-1"><Layers className="w-3.5 h-3.5" />Buat versi baru</span> untuk mengubah format ke depan.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )
+      })}
 
       <ProfileBuilder
-        open={builderOpen}
+        ctx={builder}
         units={units.data?.units ?? []}
-        onClose={() => setBuilderOpen(false)}
-        onCreated={() => { setBuilderOpen(false); qc.invalidateQueries({ queryKey: ['profiles'] }) }}
+        onClose={() => setBuilder(null)}
+        onSaved={() => { setBuilder(null); qc.invalidateQueries({ queryKey: ['profiles'] }) }}
       />
 
       <Dialog open={!!activateVersion} onOpenChange={(v) => !v && setActivateVersion(null)}>
@@ -149,6 +214,20 @@ export function ProfilesView() {
           />
         </DialogContent>
       </Dialog>
+
+      {/* ==== Rename ==== */}
+      <RenameDialog
+        profile={renameProfile}
+        onClose={() => setRenameProfile(null)}
+        onSaved={() => { setRenameProfile(null); qc.invalidateQueries({ queryKey: ['profiles'] }) }}
+      />
+
+      {/* ==== Delete (guarded) ==== */}
+      <DeleteDialog
+        profile={deleteProfile}
+        onClose={() => setDeleteProfile(null)}
+        onSaved={() => { setDeleteProfile(null); qc.invalidateQueries({ queryKey: ['profiles'] }) }}
+      />
     </div>
   )
 }
@@ -212,6 +291,98 @@ function ActivateForm({ onSubmit, busy }: { onSubmit: (resetPolicy: string, date
   )
 }
 
+// ===================== Rename & Delete =====================
+
+function RenameDialog({ profile, onClose, onSaved }: {
+  profile: ProfileRow | null
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [name, setName] = useState('')
+  // reset state saat profil target berganti
+  const [lastId, setLastId] = useState('')
+  if (profile && profile.id !== lastId) {
+    setLastId(profile.id)
+    setName(profile.name)
+  }
+  const rename = useMutation({
+    mutationFn: () => apiPatch(`/api/numbering-profiles?id=${profile!.id}`, { name }),
+    onSuccess: () => { toast.success('Nama profil diperbarui'); onSaved() },
+    onError: (e) => toast.error((e as Error).message),
+  })
+  return (
+    <Dialog open={!!profile} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="font-display text-lg flex items-center gap-2">
+            <span className="w-8 h-8 rounded-lg bg-emerald-soft text-emerald flex items-center justify-center"><Pencil className="w-4 h-4" /></span>
+            Ubah Nama Profil
+          </DialogTitle>
+          <DialogDescription>
+            Nama hanya label dokumentasi — pemilik profil (unit/kepanitiaan) tidak dapat dipindahkan
+            demi kesinambungan histori nomor.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <Label className="font-semibold text-[13px]">Nama profil</Label>
+          <Input value={name} className="bg-surface" onChange={(e) => setName(e.target.value)}
+            placeholder="mis. Preset Workbook 2026" autoFocus />
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose}>Batal</Button>
+          <Button disabled={!name.trim() || name === profile?.name || rename.isPending}
+            onClick={() => rename.mutate()} className="shadow-card min-w-28">
+            {rename.isPending ? 'Menyimpan…' : 'Simpan'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function DeleteDialog({ profile, onClose, onSaved }: {
+  profile: ProfileRow | null
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const del = useMutation({
+    mutationFn: () => apiDelete(`/api/numbering-profiles?id=${profile!.id}`),
+    onSuccess: () => { toast.success('Profil dihapus'); onSaved() },
+    onError: (e) => toast.error((e as Error).message),
+  })
+  const hasActive = !!profile?.versions.some(v => v.status === 'ACTIVE')
+  return (
+    <Dialog open={!!profile} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="font-display text-lg flex items-center gap-2">
+            <span className="w-8 h-8 rounded-lg bg-red-50 text-destructive flex items-center justify-center"><Trash2 className="w-4 h-4" /></span>
+            Hapus Profil?
+          </DialogTitle>
+          <DialogDescription>
+            {profile && (
+              <>
+                Profil <span className="font-semibold">{profile.name}</span>
+                {' '}({profile.committee ? `Panitia ${profile.committee.code}` : `Unit ${profile.owner.code}`})
+                {hasActive
+                  ? ' masih memiliki versi AKTIF — unit/panitia ini sedang memakainya untuk menerbitkan surat. '
+                  : ' beserta seluruh versinya akan dihapus. '}
+                Penghapusan diblokir sistem bila profil masih aktif atau memiliki histori penomoran.
+              </>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose}>Batal</Button>
+          <Button variant="destructive" disabled={del.isPending || hasActive} onClick={() => del.mutate()}>
+            {del.isPending ? 'Menghapus…' : 'Ya, Hapus'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ===================== Builder =====================
 
 const COMPONENT_PRESETS: { label: string; make: () => DSLComponent }[] = [
@@ -225,23 +396,36 @@ const COMPONENT_PRESETS: { label: string; make: () => DSLComponent }[] = [
   { label: 'Tahun 4 digit (tgl surat)', make: () => ({ type: 'letterDate', format: 'YEAR_4' }) },
 ]
 
-function ProfileBuilder({ open, units, onClose, onCreated }: {
-  open: boolean
+const DEFAULT_COMPONENTS: DSLComponent[] = [
+  { type: 'sequence', padding: 3 },
+  { type: 'direction', mapping: { INTERNAL: 'A', EXTERNAL: 'B' } },
+  { type: 'letterTypeCode' },
+  { type: 'literal', value: 'YAPSI-DS' },
+  { type: 'letterDate', format: 'MONTH_ROMAN' },
+  { type: 'letterDate', format: 'YEAR_4' },
+]
+
+function ProfileBuilder({ ctx, units, onClose, onSaved }: {
+  ctx: BuilderCtx | null
   units: UnitRow[]
   onClose: () => void
-  onCreated: () => void
+  onSaved: () => void
 }) {
+  const isCreate = ctx?.mode === 'create'
   const [name, setName] = useState('')
   const [ownerId, setOwnerId] = useState('')
   const [separator, setSeparator] = useState('/')
-  const [components, setComponents] = useState<DSLComponent[]>([
-    { type: 'sequence', padding: 3 },
-    { type: 'direction', mapping: { INTERNAL: 'A', EXTERNAL: 'B' } },
-    { type: 'letterTypeCode' },
-    { type: 'literal', value: 'YAPSI-DS' },
-    { type: 'letterDate', format: 'MONTH_ROMAN' },
-    { type: 'letterDate', format: 'YEAR_4' },
-  ])
+  const [components, setComponents] = useState<DSLComponent[]>(DEFAULT_COMPONENTS)
+  // Sinkronkan state saat konteks builder berganti
+  const [lastKey, setLastKey] = useState('')
+  const key = ctx ? `${ctx.mode}:${ctx.profileId ?? 'new'}:${ctx.initialDsl ? JSON.stringify(ctx.initialDsl) : ''}` : ''
+  if (ctx && key !== lastKey) {
+    setLastKey(key)
+    setName(ctx.name ?? '')
+    setOwnerId('')
+    setSeparator(ctx.initialDsl?.separator ?? '/')
+    setComponents(ctx.initialDsl?.components ?? DEFAULT_COMPONENTS)
+  }
 
   const dsl: NumberingDSL = { version: 1, separator: separator as NumberingDSL['separator'], components }
 
@@ -250,9 +434,18 @@ function ProfileBuilder({ open, units, onClose, onCreated }: {
       '/api/numbering-profiles/validate', { dsl }),
   })
 
-  const create = useMutation({
-    mutationFn: () => apiPost('/api/numbering-profiles', { name, ownerId, dsl }),
-    onSuccess: () => { toast.success('Profil dibuat (versi DRAFT)'); onCreated() },
+  const save = useMutation({
+    mutationFn: () => {
+      if (!ctx) throw new Error('Konteks builder kosong')
+      if (ctx.mode === 'create') {
+        return apiPost('/api/numbering-profiles', { name, ownerId, dsl })
+      }
+      return apiPut('/api/numbering-profiles', { profileId: ctx.profileId, dsl, mode: ctx.mode === 'draft' ? 'draft' : 'new' })
+    },
+    onSuccess: () => {
+      toast.success(isCreate ? 'Profil dibuat (versi DRAFT)' : ctx?.mode === 'draft' ? 'Draft diperbarui' : 'Versi baru dibuat (DRAFT)')
+      onSaved()
+    },
     onError: (e) => toast.error((e as Error).message),
   })
 
@@ -266,32 +459,53 @@ function ProfileBuilder({ open, units, onClose, onCreated }: {
 
   const sample = components.map(c => componentLabel(c)).join(separator)
 
+  const titles: Record<BuilderCtx['mode'], { title: string; desc: string }> = {
+    create: {
+      title: 'Builder Profil Penomoran',
+      desc: 'Susun komponen nomor dari kiri ke kanan. Profil dibuat sebagai DRAFT — validasi dan aktivasi eksplisit setelahnya.',
+    },
+    draft: {
+      title: 'Edit Draft Versi',
+      desc: 'Perubahan langsung mengubah DSL pada draft terbuka. Setelah diaktivasi, versi menjadi immutable — perubahan selanjutnya lewat versi baru.',
+    },
+    'new-version': {
+      title: 'Buat Versi Baru',
+      desc: 'Turunkan versi baru dari format terakhir, sesuaikan, lalu aktivasi. Versi aktif lama otomatis dipensiunkan saat versi baru diaktifkan — nomor historis tidak berubah.',
+    },
+  }
+
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <Dialog open={!!ctx} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto scrollbar-slim">
         <DialogHeader>
-          <DialogTitle className="font-display text-xl">Builder Profil Penomoran</DialogTitle>
-          <DialogDescription>
-            Susun komponen nomor dari kiri ke kanan. Profil dibuat sebagai DRAFT — validasi dan aktivasi eksplisit setelahnya.
-          </DialogDescription>
+          <DialogTitle className="font-display text-xl">{ctx ? titles[ctx.mode].title : ''}</DialogTitle>
+          <DialogDescription>{ctx ? titles[ctx.mode].desc : ''}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-5">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-[12px] font-semibold">Nama profil</Label>
-              <Input value={name} className="bg-surface" onChange={(e) => setName(e.target.value)} placeholder="mis. Preset Workbook 2026" />
+          {isCreate && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-[12px] font-semibold">Nama profil</Label>
+                <Input value={name} className="bg-surface" onChange={(e) => setName(e.target.value)} placeholder="mis. Preset Workbook 2026" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[12px] font-semibold">Unit pemilik</Label>
+                <Select value={ownerId || undefined} onValueChange={setOwnerId}>
+                  <SelectTrigger className="bg-surface"><SelectValue placeholder="Pilih unit" /></SelectTrigger>
+                  <SelectContent>
+                    {units.map((u) => <SelectItem key={u.id} value={u.id}>{u.code} — {u.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-[12px] font-semibold">Unit pemilik</Label>
-              <Select value={ownerId || undefined} onValueChange={setOwnerId}>
-                <SelectTrigger className="bg-surface"><SelectValue placeholder="Pilih unit" /></SelectTrigger>
-                <SelectContent>
-                  {units.map((u) => <SelectItem key={u.id} value={u.id}>{u.code} — {u.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+          )}
+          {!isCreate && ctx && (
+            <div className="rounded-xl border bg-muted/30 px-4 py-3 text-[12.5px]">
+              Profil: <span className="font-semibold">{ctx.name}</span>
+              {' '}· mode: <span className="font-semibold">{ctx.mode === 'draft' ? 'edit draft terbuka' : 'turunkan versi baru'}</span>
             </div>
-          </div>
+          )}
 
           <div className="space-y-1.5 w-44">
             <Label className="text-[12px] font-semibold">Separator antar komponen</Label>
@@ -363,9 +577,9 @@ function ProfileBuilder({ open, units, onClose, onCreated }: {
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button disabled={!name || !ownerId || components.length === 0 || create.isPending}
-            onClick={() => create.mutate()} className="shadow-card min-w-32">
-            {create.isPending ? 'Menyimpan…' : 'Simpan DRAFT'}
+          <Button disabled={components.length === 0 || save.isPending || (isCreate && (!name || !ownerId))}
+            onClick={() => save.mutate()} className="shadow-card min-w-32">
+            {save.isPending ? 'Menyimpan…' : isCreate ? 'Simpan DRAFT' : ctx?.mode === 'draft' ? 'Simpan Perubahan' : 'Simpan Versi Baru'}
           </Button>
         </DialogFooter>
       </DialogContent>

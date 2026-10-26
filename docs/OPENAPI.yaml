@@ -6,7 +6,7 @@ info:
     Sistem Informasi Registrasi & Arsip Surat — YAPSI Darussalam.
     API backend SIRAT (Next.js Route Handlers) untuk autentikasi, unit/kepanitiaan,
     profil penomoran, penerbitan surat atomik-idempotent, arsip berversi, audit,
-    health/integrity, import Excel dry-run, dan export CSV.
+    health/integrity, import data (dry-run), dan export CSV.
     Spesifikasi mengacu pada PRD §14 + §21 dan Blueprint §16.
   contact:
     name: SIRAT Maintainer
@@ -151,7 +151,7 @@ paths:
     patch: { summary: Update jenis surat (deactivate via isActive=false) }
 
   /api/numbering-profiles:
-    get: { summary: Daftar profil penomoran dalam scope }
+    get: { summary: Daftar profil (v1.5: permission profile.manage — pusat saja; sebelumnya letter.view) }
     post:
       summary: Buat profil DRAFT untuk unit/committee
       requestBody:
@@ -167,7 +167,22 @@ paths:
                 dsl:
                   type: object
                   description: NumberingDSL JSON (lihat lib/numbering/dsl.ts)
-    put: { summary: Update profil DRAFT (membuat version baru bila profil ACTIVE) }
+    put:
+      summary: Simpan DSL (v1.5) — mode 'draft' perbarui draft terbuka, mode 'new' buat versi baru
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [profileId, dsl]
+              properties:
+                profileId: { type: string }
+                dsl: { type: object }
+                mode: { type: string, enum: [draft, new], default: draft }
+    patch:
+      summary: Ubah nama profil (v1.5) — ?id= ; pemilik unit/kepanitiaan tidak bisa dipindahkan
+    delete:
+      summary: Hapus profil (v1.5, guarded) — ?id= ; 409 bila masih ada versi AKTIF atau ada histori surat
 
   /api/numbering-profiles/validate:
     post:
@@ -415,9 +430,32 @@ paths:
                   missing: { type: array, items: {} }
                   orphans: { type: array, items: {} }
 
+  /api/import/template:
+    get:
+      summary: Unduh template import (v1.5) — format csv|xlsx|xls, permission import.manage
+      parameters:
+        - in: query
+          name: format
+          schema: { type: string, enum: [csv, xlsx, xls], default: xlsx }
+      responses:
+        '200':
+          description: Berkas template (CSV: titik-koma + BOM UTF-8; XLSX/XLS: sheet Nomor Surat + Petunjuk)
+          headers:
+            Content-Type:
+              schema: { type: string, example: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
+            Content-Disposition:
+              schema: { type: string, example: "attachment; filename=\"template-import-sirat.xlsx\"" }
+
+  /api/import/batches:
+    get:
+      summary: Riwayat import (v1.5) — 25 batch terakhir, scope-filtered (non-global: miliknya sendiri atau unit yang dikelolanya)
+      responses:
+        '200':
+          description: Daftar batch (status DRY_RUN/COMMITTED, counts, unit tujuan)
+
   /api/import/excel:
     post:
-      summary: Upload + parse + classify Excel (dry-run, tidak menulis surat)
+      summary: Upload + parse + classify berkas (dry-run, tidak menulis surat) — csv/xls/xlsx (v1.5)
       requestBody:
         content:
           multipart/form-data:
@@ -425,28 +463,25 @@ paths:
               type: object
               properties:
                 file: { type: string, format: binary }
-                targetUnitId: { type: string }
       responses:
         '200':
-          description: Batch created (status DRY_RUN) + report 66 kandidat + 33 praisi + anomali
+          description: Batch created (status DRY_RUN) + klasifikasi baris (CANDIDATE/NEEDS_REVIEW/ERROR/PRAISI)
 
   /api/import/{batchId}/commit:
     post:
-      summary: Commit selektif baris yang dipilih (FR-031)
+      summary: Commit selektif baris terpilih (transaksional; validasi scope unit target sejak v1.5)
       requestBody:
         content:
           application/json:
             schema:
               type: object
               properties:
-                rows:
-                  type: array
-                  items:
-                    type: object
-                    properties:
-                      rowIndex: { type: integer }
-                      decision: { type: string, enum: [IMPORTED, SKIPPED] }
-                      legacyNumber: { type: string, nullable: true }
+                rowIds: { type: array, items: { type: string } }
+                targetUnitId: { type: string }
+                setHighWater: { type: boolean }
+      responses:
+        '403':
+          description: FORBIDDEN — targetUnitId di luar unit yang dikelola (canManageUnit)
 
   /api/export/letters.csv:
     get:

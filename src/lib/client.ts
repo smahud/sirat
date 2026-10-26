@@ -52,6 +52,38 @@ export async function apiPut<T = unknown>(path: string, body?: unknown): Promise
   return api<T>(path, { method: 'PUT', body: body === undefined ? undefined : JSON.stringify(body) })
 }
 
+export async function apiDelete<T = unknown>(path: string): Promise<T> {
+  return api<T>(path, { method: 'DELETE' })
+}
+
+/** Unduh berkas via API ter-autentikasi (cookie sesi) dan simpan sebagai file. */
+export async function apiDownload(path: string, fallbackName: string): Promise<void> {
+  const res = await fetch(path, { credentials: 'same-origin' })
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`
+    try {
+      const data = await res.json() as { error?: { message?: string } }
+      if (data.error?.message) msg = data.error.message
+    } catch { /* body bukan JSON */ }
+    throw new ApiError(res.status, 'DOWNLOAD', msg)
+  }
+  const blob = await res.blob()
+  const cd = res.headers.get('Content-Disposition') ?? ''
+  const m = cd.match(/filename="([^"]+)"/)
+  const name = m?.[1] ?? fallbackName
+  const url = URL.createObjectURL(blob)
+  try {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 5_000)
+  }
+}
+
 export function fmtDate(d: string | Date | null | undefined): string {
   if (!d) return '—'
   const date = typeof d === 'string' ? new Date(d) : d

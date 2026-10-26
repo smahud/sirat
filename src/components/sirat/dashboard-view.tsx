@@ -8,6 +8,8 @@ import {
   FileStack, FileX2, Sparkles, ArrowRight,
 } from 'lucide-react'
 import { PageHeader, StatCard, StatusBadge, MiniTag, EmptyState } from './ui-bits'
+import type { Me } from './use-session'
+import { hasPerm } from './use-session'
 import type { LucideIcon } from 'lucide-react'
 
 interface HealthData {
@@ -19,19 +21,51 @@ interface HealthData {
   time: string
 }
 
-export function DashboardView() {
+/**
+ * Dashboard — statistik menyesuaikan hak akses (v1.5):
+ * - Punya health.view (UNIT_ADMIN ke atas): statistik global + panel kesehatan.
+ * - Tanpa health.view (OPERATOR/VIEWER/AUDITOR): statistik SURAT di scope sendiri
+ *   (dari /api/letters yang ter-scope), tanpa panel kesehatan sistem — sebelumnya
+ *   query /api/health selalu 403 dan status "memuat…" selamanya.
+ */
+export function DashboardView({ me }: { me: Me }) {
+  const canHealth = hasPerm(me.permissions, 'health.view')
+
   const health = useQuery({
     queryKey: ['health'],
     queryFn: () => apiGet<HealthData>('/api/health'),
     refetchInterval: 30_000,
+    enabled: canHealth,
   })
 
   const recent = useQuery({
     queryKey: ['letters-recent'],
-    queryFn: () => apiGet<{ letters: LetterRow[] }>('/api/letters?pageSize=6'),
+    queryFn: () => apiGet<{ letters: LetterRow[]; total: number }>('/api/letters?pageSize=6'),
+  })
+
+  // Fallback statistik ter-scope untuk user tanpa health.view (ringan, 3 query)
+  const scopedIssued = useQuery({
+    queryKey: ['scoped-issued'],
+    queryFn: () => apiGet<{ total: number }>('/api/letters?status=ISSUED&pageSize=1'),
+    enabled: !canHealth,
+  })
+  const scopedDrafts = useQuery({
+    queryKey: ['scoped-drafts'],
+    queryFn: () => apiGet<{ total: number }>('/api/letters?status=DRAFT&pageSize=1'),
+    enabled: !canHealth,
+  })
+  const scopedCancelled = useQuery({
+    queryKey: ['scoped-cancelled'],
+    queryFn: () => apiGet<{ total: number }>('/api/letters?status=CANCELLED&pageSize=1'),
+    enabled: !canHealth,
   })
 
   const c = health.data?.counts
+  const s = canHealth ? undefined : {
+    issued: scopedIssued.data?.total,
+    drafts: scopedDrafts.data?.total,
+    cancelled: scopedCancelled.data?.total,
+  }
 
   return (
     <div>
@@ -53,31 +87,43 @@ export function DashboardView() {
               Selamat bertugas, semoga lancar.
             </h2>
             <p className="text-[13px] text-white/65 mt-2">
-              {health.data
-                ? <>Database {health.data.db.latencyMs} ms · Storage {health.data.storage.ok ? 'baik' : 'bermasalah'} · Audit terakhir {fmtDateTime(health.data.lastAuditAt)}</>
-                : 'Memuat status sistem…'}
+              {canHealth
+                ? (health.data
+                    ? <>Database {health.data.db.latencyMs} ms · Storage {health.data.storage.ok ? 'baik' : 'bermasalah'} · Audit terakhir {fmtDateTime(health.data.lastAuditAt)}</>
+                    : 'Memuat status sistem…')
+                : <>Menampilkan surat pada lingkup penugasan Anda · {recent.data?.total ?? '…'} surat</>}
             </p>
           </div>
           <div className="flex items-center gap-2.5 rounded-xl bg-white/10 border border-white/15 px-4 py-3 backdrop-blur-sm">
-            <span className={`relative flex h-2.5 w-2.5 ${health.data?.db.ok !== false ? '' : 'opacity-40'}`}>
+            <span className={`relative flex h-2.5 w-2.5 ${canHealth && health.data?.db.ok === false ? 'opacity-40' : ''}`}>
               <span className="absolute inline-flex h-full w-full rounded-full bg-[#e6c96a] opacity-60 animate-ping" />
               <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#e6c96a]" />
             </span>
             <span className="text-[12.5px] font-medium text-white/90">
-              {health.data ? (health.data.db.ok ? 'Semua layanan normal' : 'Perlu perhatian') : '…'}
+              {canHealth
+                ? (health.data ? (health.data.db.ok ? 'Semua layanan normal' : 'Perlu perhatian') : '…')
+                : 'Siap mencatat surat'}
             </span>
           </div>
         </div>
       </div>
 
-      {/* Statistik */}
+      {/* Statistik — global bila berhak, scoped bila tidak */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3.5 mb-6">
-        <StatCard label="Surat Terbit" value={c?.issued ?? '—'} icon={FileText} tone="emerald" />
-        <StatCard label="Draft" value={c?.drafts ?? '—'} icon={FileStack} tone="gold" />
-        <StatCard label="Dibatalkan" value={c?.cancelled ?? '—'} icon={FileX2} tone="red" />
-        <StatCard label="Berkas Arsip" value={c?.files ?? '—'} icon={FolderArchive} tone="teal" />
-        <StatCard label="Unit" value={c?.units ?? '—'} icon={Building2} tone="slate" />
-        <StatCard label="Kepanitiaan" value={c?.committees ?? '—'} icon={Users} tone="slate" />
+        <StatCard label="Surat Terbit" value={canHealth ? (c?.issued ?? '—') : (s?.issued ?? '…')} icon={FileText} tone="emerald" />
+        <StatCard label="Draft" value={canHealth ? (c?.drafts ?? '—') : (s?.drafts ?? '…')} icon={FileStack} tone="gold" />
+        <StatCard label="Dibatalkan" value={canHealth ? (c?.cancelled ?? '—') : (s?.cancelled ?? '…')} icon={FileX2} tone="red" />
+        {canHealth ? (
+          <>
+            <StatCard label="Berkas Arsip" value={c?.files ?? '—'} icon={FolderArchive} tone="teal" />
+            <StatCard label="Unit" value={c?.units ?? '—'} icon={Building2} tone="slate" />
+            <StatCard label="Kepanitiaan" value={c?.committees ?? '—'} icon={Users} tone="slate" />
+          </>
+        ) : (
+          <>
+            <StatCard label="Surat di Scope Anda" value={recent.data?.total ?? '…'} icon={FolderArchive} tone="teal" />
+          </>
+        )}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-5">
@@ -126,37 +172,39 @@ export function DashboardView() {
           </CardContent>
         </Card>
 
-        {/* Kesehatan */}
-        <Card className="lg:col-span-2 shadow-card">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-[14px] font-semibold flex items-center gap-2">
-              <Activity className="w-4 h-4 text-emerald" /> Kesehatan Sistem
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <HealthRow
-              icon={ShieldCheck}
-              label="Database"
-              ok={health.data?.db.ok}
-              value={health.data ? `${health.data.db.latencyMs} ms` : 'memuat…'}
-            />
-            <HealthRow
-              icon={FolderArchive}
-              label="Storage Arsip"
-              ok={health.data?.storage.ok}
-              value={health.data ? (health.data.storage.ok ? 'Tulis/baca normal' : 'Bermasalah') : 'memuat…'}
-            />
-            <div className="rounded-lg bg-muted/60 px-3.5 py-3 space-y-1.5">
-              <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">Direktori root arsip</p>
-              <p className="text-[11px] font-mono break-all text-muted-foreground" title={health.data?.storage.root}>
-                {health.data?.storage.root ?? '…'}
+        {/* Kesehatan — hanya yang berhak (health.view) */}
+        {canHealth && (
+          <Card className="lg:col-span-2 shadow-card">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-[14px] font-semibold flex items-center gap-2">
+                <Activity className="w-4 h-4 text-emerald" /> Kesehatan Sistem
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <HealthRow
+                icon={ShieldCheck}
+                label="Database"
+                ok={health.data?.db.ok}
+                value={health.data ? `${health.data.db.latencyMs} ms` : 'memuat…'}
+              />
+              <HealthRow
+                icon={FolderArchive}
+                label="Storage Arsip"
+                ok={health.data?.storage.ok}
+                value={health.data ? (health.data.storage.ok ? 'Tulis/baca normal' : 'Bermasalah') : 'memuat…'}
+              />
+              <div className="rounded-lg bg-muted/60 px-3.5 py-3 space-y-1.5">
+                <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">Direktori root arsip</p>
+                <p className="text-[11px] font-mono break-all text-muted-foreground" title={health.data?.storage.root}>
+                  {health.data?.storage.root ?? '…'}
+                </p>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Pemindaian integritas lengkap tersedia di menu <span className="font-medium text-foreground">Kesehatan</span>.
               </p>
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              Pemindaian integritas lengkap tersedia di menu <span className="font-medium text-foreground">Kesehatan</span>.
-            </p>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   )

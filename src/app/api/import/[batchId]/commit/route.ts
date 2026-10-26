@@ -5,6 +5,7 @@ import { ok, fail, handle, guardMutation, readJson } from '@/lib/api-helpers'
 import { requirePermission } from '@/lib/api-helpers'
 import { writeAudit } from '@/lib/audit'
 import { normalize, mapDirection, ParsedRow } from '@/lib/import-service'
+import { canManageUnit } from '@/lib/rbac'
 
 const commitSchema = z.object({
   rowIds: z.array(z.string()).min(1),
@@ -17,6 +18,14 @@ const commitSchema = z.object({
  * Blueprint 16.4: hanya baris terpilih; histori TIDAK mengambil nomor baru;
  * raw_number dipertahankan persis; imported_at wajib; issued_at tidak ditebak.
  * setHighWater=true → counter disetel minimal max sequence terimpor (tidak menurunkan).
+ *
+ * v1.5 — scope validation unit target (audit):
+ * - Role global (SYSTEM_ADMIN/ORG_ADMIN): boleh import ke unit mana pun.
+ * - UNIT_ADMIN: hanya unit pada assignment-nya (frontend pun sudah membatasi
+ *   dropdown, tapi backend WAJIB memvalidasi ulang — filtering frontend bukan
+ *   batas keamanan).
+ * - COMMITTEE_ADMIN tanpa assignment unit: tidak punya target import yang sah
+ *   (surat hasil import adalah surat reguler unit, bukan surat kepanitiaan).
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ batchId: string }> }) {
   return handle(async () => {
@@ -36,6 +45,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ bat
 
     const unit = await db.unit.findUnique({ where: { id: targetUnitId } })
     if (!unit) return fail(404, 'NOT_FOUND', 'Unit target tidak ditemukan')
+
+    // ==== SCOPE VALIDATION (v1.5, kritis) ====
+    if (!canManageUnit(r.user, targetUnitId)) {
+      return fail(403, 'FORBIDDEN',
+        `Anda tidak memiliki wewenang meng-import ke unit ${unit.code}. ` +
+        (r.user.scope.all
+          ? 'Hubungi administrator sistem.'
+          : 'Hanya unit yang ditugaskan kepada Anda yang boleh menjadi target import.'))
+    }
 
     const rows = await db.importRow.findMany({ where: { id: { in: rowIds }, batchId } })
 
@@ -133,7 +151,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ bat
 
       await tx.importBatch.update({
         where: { id: batchId },
-        data: { status: 'COMMITTED', committedAt: new Date() },
+        data: { status: 'COMMITTED', committedAt: new Date(), targetUnitId },
       })
       await writeAudit(tx, {
         actorId: r.user.id, action: 'import.commit', entityType: 'importBatch', entityId: batchId,

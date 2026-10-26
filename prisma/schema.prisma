@@ -54,6 +54,7 @@ model Unit {
   profiles    NumberingProfile[]
   letters     Letter[]          @relation("IssuingUnit")
   backupGrants BackupGrant[]
+  importBatches ImportBatch[]  @relation("ImportTargetUnit")
 }
 
 model Committee {
@@ -336,6 +337,7 @@ model ImportBatch {
   status     String    @default("DRY_RUN") // DRY_RUN|COMMITTED
   report     String? // JSON ringkasan
   targetUnitId String?
+  targetUnit Unit?   @relation("ImportTargetUnit", fields: [targetUnitId], references: [id])
   createdBy  String?
   createdAt  DateTime  @default(now())
   committedAt DateTime?
