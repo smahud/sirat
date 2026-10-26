@@ -115,6 +115,7 @@ const deleteSchema = z.object({ id: z.string().min(1) })
  * - Fisik HANYA jika tidak punya dependensi (surat/kepanitiaan/assignment/profil/namespace/grant).
  * - Ada dependensi → 409 HAS_HISTORY: gunakan status ARCHIVED (soft delete).
  * - Unit aktif tidak bisa dihapus — nonaktifkan dulu (anti kecelakaan).
+ * Terima id via query ?id= (konsisten dgn PATCH) atau body JSON.
  */
 export async function DELETE(req: NextRequest) {
   return handle(async () => {
@@ -123,7 +124,9 @@ export async function DELETE(req: NextRequest) {
     const r = await requirePermission('unit.manage')
     if ('error' in r) return r.error
 
-    const parsed = deleteSchema.safeParse(await readJson(req))
+    const url = new URL(req.url)
+    const body = await readJson<z.infer<typeof deleteSchema>>(req).catch(() => null)
+    const parsed = deleteSchema.safeParse(body ?? { id: url.searchParams.get('id') ?? '' })
     if (!parsed.success) return fail(400, 'VALIDATION', 'Parameter id wajib')
     const { id } = parsed.data
 
@@ -131,8 +134,9 @@ export async function DELETE(req: NextRequest) {
       where: { id },
       include: {
         _count: {
-          select: { letters: true, committees: true, assignments: true, profiles: true, namespaces: true, backupGrants: true },
+          select: { letters: true, committees: true, assignments: true, profiles: true, backupGrants: true },
         },
+        namespaces: { include: { _count: { select: { counters: true } } } },
       },
     })
     if (!unit) return fail(404, 'NOT_FOUND', 'Unit tidak ditemukan')
@@ -140,13 +144,20 @@ export async function DELETE(req: NextRequest) {
       return fail(409, 'STILL_ACTIVE', 'Unit masih aktif — nonaktifkan terlebih dahulu sebelum menghapus')
     }
     const deps = unit._count
-    const depCount = deps.letters + deps.committees + deps.assignments + deps.profiles + deps.namespaces + deps.backupGrants
+    // Namespace yang masih memiliki counter aktif (lastValue > 0) = histori penomoran → blokir.
+    // Namespace kosong (tanpa surat & tanpa counter berjalan) hanya perancah → boleh ikut dibersihkan.
+    const namespacesWithHistory = await db.counterNamespace.count({
+      where: { unitId: id, counters: { some: { lastValue: { gt: 0 } } } },
+    })
+    const depCount = deps.letters + deps.committees + deps.assignments + deps.profiles + deps.backupGrants + namespacesWithHistory
     if (depCount > 0) {
       return fail(409, 'HAS_HISTORY',
-        `Unit memiliki dependensi (${deps.letters} surat, ${deps.committees} kepanitiaan, ${deps.assignments} penugasan, ${deps.profiles} profil, ${deps.namespaces} namespace) — gunakan status Arsip agar histori tetap tersambung.`)
+        `Unit memiliki dependensi (${deps.letters} surat, ${deps.committees} kepanitiaan, ${deps.assignments} penugasan, ${deps.profiles} profil, ${namespacesWithHistory} namespace ber-histori) — gunakan status Arsip agar histori tetap tersambung.`)
     }
 
     await db.$transaction(async (tx) => {
+      // Bersihkan namespace perancah kosong (counter NOL / tidak ada)
+      await tx.counterNamespace.deleteMany({ where: { unitId: id } })
       await tx.unit.delete({ where: { id } })
       await writeAudit(tx, {
         actorId: r.user.id, action: 'unit.delete', entityType: 'unit', entityId: id,

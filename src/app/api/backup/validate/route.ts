@@ -76,23 +76,29 @@ export async function POST(req: NextRequest) {
       }
       allowedTargets = { type: 'FULL', unitIds: [], committeeIds: [] }
     } else {
-      allowedTargets = {
-        type: 'SCOPED',
-        unitIds: manifest.scope.unitIds.filter(id => caps.scopes.some(s => s.type === 'UNIT' && s.id === id && s.canRestore)),
-        committeeIds: manifest.scope.committeeIds.filter(id => caps.scopes.some(s => s.type === 'COMMITTEE' && s.id === id && s.canRestore)),
-      }
-      if (allowedTargets.unitIds.length === 0 && allowedTargets.committeeIds.length === 0) {
-        await fs.rm(filePath, { force: true })
-        return fail(403, 'SCOPE', 'Anda tidak memiliki izin backup.restore untuk scope manapun di dalam arsip ini')
-      }
-      // Verifikasi ulang via helper tunggal (konsistensi)
-      const err = assertBackupTargets(caps, [
-        ...allowedTargets.unitIds.map(id => ({ type: 'UNIT' as const, id })),
-        ...allowedTargets.committeeIds.map(id => ({ type: 'COMMITTEE' as const, id })),
-      ], 'restore')
-      if (err) {
-        await fs.rm(filePath, { force: true })
-        return fail(403, 'SCOPE', err)
+      // Super Admin (fullRestore) boleh restore scope mana pun di dalam arsip;
+      // user lain dibatasi irisan scope arsip × grant restore.
+      if (caps.fullRestore) {
+        allowedTargets = { type: 'SCOPED', unitIds: manifest.scope.unitIds, committeeIds: manifest.scope.committeeIds }
+      } else {
+        allowedTargets = {
+          type: 'SCOPED',
+          unitIds: manifest.scope.unitIds.filter(id => caps.scopes.some(s => s.type === 'UNIT' && s.id === id && s.canRestore)),
+          committeeIds: manifest.scope.committeeIds.filter(id => caps.scopes.some(s => s.type === 'COMMITTEE' && s.id === id && s.canRestore)),
+        }
+        if (allowedTargets.unitIds.length === 0 && allowedTargets.committeeIds.length === 0) {
+          await fs.rm(filePath, { force: true })
+          return fail(403, 'SCOPE', 'Anda tidak memiliki izin backup.restore untuk scope manapun di dalam arsip ini')
+        }
+        // Verifikasi ulang via helper tunggal (konsistensi)
+        const err = assertBackupTargets(caps, [
+          ...allowedTargets.unitIds.map(id => ({ type: 'UNIT' as const, id })),
+          ...allowedTargets.committeeIds.map(id => ({ type: 'COMMITTEE' as const, id })),
+        ], 'restore')
+        if (err) {
+          await fs.rm(filePath, { force: true })
+          return fail(403, 'SCOPE', err)
+        }
       }
     }
 

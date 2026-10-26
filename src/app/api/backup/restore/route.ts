@@ -54,14 +54,32 @@ export async function POST(req: NextRequest) {
       if (!caps.fullRestore) return fail(403, 'FORBIDDEN', 'Full Restore hanya dapat dilakukan Super Admin')
       targets = { type: 'FULL', unitIds: [], committeeIds: [] }
     } else {
+      // B.2: satu-satunya scope restore → target otomatis terkunci
+      if (body.unitIds.length + body.committeeIds.length === 0) {
+        const single = caps.scopes.filter(s => s.canRestore)
+        if (single.length === 1) {
+          body.unitIds = single[0].type === 'UNIT' ? [single[0].id] : []
+          body.committeeIds = single[0].type === 'COMMITTEE' ? [single[0].id] : []
+        }
+      }
       targets = { type: 'SCOPED', unitIds: body.unitIds, committeeIds: body.committeeIds }
       const t = [
         ...body.unitIds.map(id => ({ type: 'UNIT' as const, id })),
         ...body.committeeIds.map(id => ({ type: 'COMMITTEE' as const, id })),
       ]
       if (t.length === 0) return fail(400, 'VALIDATION', 'Pilih minimal satu target scope restore')
-      const err = assertBackupTargets(caps, t, 'restore')
-      if (err) return fail(403, 'SCOPE', err)
+      if (caps.fullRestore) {
+        // Super Admin boleh scoped restore scope mana pun (K.2) — pastikan target ada
+        for (const x of t) {
+          const exists = x.type === 'UNIT'
+            ? await db.unit.findUnique({ where: { id: x.id }, select: { id: true } })
+            : await db.committee.findUnique({ where: { id: x.id }, select: { id: true } })
+          if (!exists) return fail(404, 'NOT_FOUND', `Scope ${x.type} tidak ditemukan`)
+        }
+      } else {
+        const err = assertBackupTargets(caps, t, 'restore')
+        if (err) return fail(403, 'SCOPE', err)
+      }
     }
 
     // Ambil file upload (milik actor, belum TTL)

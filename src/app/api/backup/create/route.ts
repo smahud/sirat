@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
+import { db } from '@/lib/db'
 import { ok, fail, handle, guardMutation, readJson } from '@/lib/api-helpers'
 import { requireUser } from '@/lib/api-helpers'
 import { resolveBackupCapabilities, assertBackupTargets } from '@/lib/rbac'
@@ -40,13 +41,32 @@ export async function POST(req: NextRequest) {
         return fail(400, 'VALIDATION', 'Full backup memuat data sensitif (hash password) — passphrase enkripsi wajib diisi (min 8 karakter)')
       }
     } else {
-      const targets = [
+      let targets = [
         ...body.unitIds.map(id => ({ type: 'UNIT' as const, id })),
         ...body.committeeIds.map(id => ({ type: 'COMMITTEE' as const, id })),
       ]
+      // B.2: satu-satunya scope → target otomatis terkunci (tidak perlu dikirim FE)
+      if (targets.length === 0) {
+        const single = caps.scopes.filter(s => s.canExport)
+        if (single.length === 1) {
+          targets = [{ type: single[0].type, id: single[0].id }]
+          body.unitIds = single[0].type === 'UNIT' ? [single[0].id] : []
+          body.committeeIds = single[0].type === 'COMMITTEE' ? [single[0].id] : []
+        }
+      }
       if (targets.length === 0) return fail(400, 'VALIDATION', 'Pilih minimal satu unit/kepanitiaan untuk backup per scope')
-      const err = assertBackupTargets(caps, targets, 'export')
-      if (err) return fail(403, 'SCOPE', err)
+      if (caps.fullExport) {
+        // Otoritas global boleh scoped backup scope mana pun — cukup pastikan targetnya ada
+        for (const t of targets) {
+          const exists = t.type === 'UNIT'
+            ? await db.unit.findUnique({ where: { id: t.id }, select: { id: true } })
+            : await db.committee.findUnique({ where: { id: t.id }, select: { id: true } })
+          if (!exists) return fail(404, 'NOT_FOUND', `Scope ${t.type} tidak ditemukan`)
+        }
+      } else {
+        const err = assertBackupTargets(caps, targets, 'export')
+        if (err) return fail(403, 'SCOPE', err)
+      }
     }
 
     const result = await createBackupFile({

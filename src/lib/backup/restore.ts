@@ -11,7 +11,7 @@ import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { writeAudit } from '@/lib/audit'
 import { safeJoin, ARCHIVE_ROOT } from '@/lib/storage/local-disk'
-import { decryptBuffer, isEncryptedContainer } from './crypto'
+import { decryptBuffer, isEncryptedContainer, BackupCryptoError } from './crypto'
 import { checkSchemaFingerprint, checkZipSafety, validateManifest, BackupManifest, ZIP_LIMITS } from './format'
 import { schemaFingerprint } from './collect'
 
@@ -91,7 +91,13 @@ export async function inspectBackupFile(filePath: string, passphrase?: string): 
   let raw: Buffer = await fs.readFile(filePath)
   if (isEncryptedContainer(raw)) {
     if (!passphrase) throw new RestoreError('Arsip terenkripsi — passphrase diperlukan')
-    raw = decryptBuffer(raw, passphrase)
+    try {
+      raw = decryptBuffer(raw, passphrase)
+    } catch (e) {
+      // Passphrase salah / arsip rusak → 422, bukan 500
+      if (e instanceof BackupCryptoError) throw new RestoreError(e.message)
+      throw e
+    }
   }
   // Validasi skema dilakukan pemanggil (butuh konteks versi berjalan).
 
@@ -167,6 +173,18 @@ export async function inspectBackupFile(filePath: string, passphrase?: string): 
     for (const meta of manifest.entries) {
       if (!entries.some(e => e.fileName === meta.name)) {
         throw new RestoreError(`Entry hilang dari arsip: ${meta.name}`)
+      }
+    }
+    // Konsistensi manifest ↔ data aktual (B.8): counts yang dimodifikasi ditolak
+    for (const [table, rows] of Object.entries(tables)) {
+      const declared = manifest.counts[table] ?? 0
+      if (declared !== rows.length) {
+        throw new RestoreError(`Manifest tidak konsisten: tabel ${table} mendeklarasikan ${declared} baris, arsip berisi ${rows.length} — arsip dimodifikasi`)
+      }
+    }
+    for (const [table, declared] of Object.entries(manifest.counts)) {
+      if (declared > 0 && !(table in tables)) {
+        throw new RestoreError(`Manifest tidak konsisten: tabel ${table} dideklarasikan (${declared} baris) namun tidak ada di arsip`)
       }
     }
     if (manifest.filesMissing.length > 0) {
@@ -400,11 +418,12 @@ const DELETE_ORDER = [
   'unit', 'letterType', 'appIdentity',
 ] as const
 
-/** Urutan penyisipan (induk dulu). */
+/** Urutan penyisipan (induk dulu) — NumberingProfileVersion bergantung namespace,
+ *  jadi CounterNamespace HARUS lebih dulu (pelajaran e2e B20). */
 const INSERT_ORDER = [
   'appIdentity', 'user', 'unit', 'committee', 'letterType', 'accessAssignment',
-  'backupGrant', 'storageBackend', 'numberingProfile', 'numberingProfileVersion',
-  'counterNamespace', 'counter', 'letter', 'numberRegistry', 'letterReference',
+  'backupGrant', 'storageBackend', 'numberingProfile', 'counterNamespace',
+  'numberingProfileVersion', 'counter', 'letter', 'numberRegistry', 'letterReference',
   'archiveFile', 'archiveVersion', 'importBatch', 'importRow', 'auditEvent',
 ] as const
 
