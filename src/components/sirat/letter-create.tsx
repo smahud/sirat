@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import { Info, Hash, Building2, CalendarDays, User, MessageSquareText, StickyNote, Users2, Lock, Link2, X, FileSearch } from 'lucide-react'
@@ -16,7 +16,7 @@ import { UnitRow } from './letters-view'
 import { useMe, canUseUnitForRegularLetter, canUseCommitteeForLetter } from './use-session'
 
 interface LetterTypeRow {
-  id: string; code: string; name: string
+  id: string; code: string; name: string; category: string | null
   description: string | null; purpose: string | null; usageExamples: string | null; notes: string | null
   isActive: boolean
   _count?: { letters: number }
@@ -263,9 +263,25 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
               <Select value={letterTypeId || undefined} onValueChange={setLetterTypeId}>
                 <SelectTrigger className="bg-surface"><SelectValue placeholder="Pilih jenis" /></SelectTrigger>
                 <SelectContent>
-                  {letterTypes.data?.letterTypes.filter(t => t.isActive).map((t) => (
-                    <SelectItem key={t.id} value={t.id}>{t.name} ({t.code})</SelectItem>
-                  ))}
+                  {(() => {
+                    // Kelompokkan per kategori (default config v1.4) — memudahkan pengguna
+                    // baru memilih jenis yang tepat tanpa harus hafal kode surat.
+                    const active = (letterTypes.data?.letterTypes ?? []).filter(t => t.isActive)
+                    const groups = new Map<string, typeof active>()
+                    for (const t of active) {
+                      const key = t.category || 'Lainnya'
+                      if (!groups.has(key)) groups.set(key, [])
+                      groups.get(key)!.push(t)
+                    }
+                    return [...groups.entries()].map(([category, items]) => (
+                      <SelectGroup key={category}>
+                        <SelectLabel className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{category}</SelectLabel>
+                        {items.map((t) => (
+                          <SelectItem key={t.id} value={t.id}>{t.name} ({t.code})</SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ))
+                  })()}
                 </SelectContent>
               </Select>
             </div>
@@ -451,9 +467,14 @@ function LetterTypeInfo({ selected }: { selected?: LetterTypeRow }) {
           <div className="p-3.5 space-y-2 max-h-72 overflow-y-auto scrollbar-slim">
             <div className="flex items-center justify-between gap-2">
               <p className="text-[13px] font-semibold">Kode Surat</p>
-              <span className="font-mono text-[12px] font-bold text-emerald-deep bg-emerald-soft rounded-md px-2 py-0.5">
-                {selected.code}
-              </span>
+              <div className="flex items-center gap-1.5">
+                {selected.category && (
+                  <span className="text-[10px] font-semibold text-emerald-deep/90">{selected.category}</span>
+                )}
+                <span className="font-mono text-[12px] font-bold text-emerald-deep bg-emerald-soft rounded-md px-2 py-0.5">
+                  {selected.code}
+                </span>
+              </div>
             </div>
             <div>
               <p className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">Nama / klasifikasi</p>

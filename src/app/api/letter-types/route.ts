@@ -12,6 +12,7 @@ import { writeAudit } from '@/lib/audit'
 const createSchema = z.object({
   code: z.string().trim().min(1).max(24),
   name: z.string().trim().min(1).max(120),
+  category: z.string().trim().max(80).optional().nullable(), // kelompok navigasi (5 kategori standar v1.4)
   description: z.string().trim().max(500).optional().nullable(),
   purpose: z.string().trim().max(500).optional().nullable(),
   usageExamples: z.string().trim().max(1000).optional().nullable(),
@@ -61,6 +62,7 @@ const patchSchema = z.object({
   id: z.string().min(1),
   code: z.string().trim().min(1).max(24).optional(), // perubahan kode hanya untuk terbitan baru (FR-005); snapshot surat lama tidak berubah
   name: z.string().trim().min(1).max(120).optional(),
+  category: z.string().trim().max(80).optional().nullable(),
   description: z.string().trim().max(500).optional().nullable(),
   purpose: z.string().trim().max(500).optional().nullable(),
   usageExamples: z.string().trim().max(1000).optional().nullable(),
@@ -94,7 +96,7 @@ export async function PATCH(req: NextRequest) {
     }
 
     const data: Record<string, unknown> = {}
-    for (const k of ['code', 'name', 'description', 'purpose', 'usageExamples', 'notes', 'isActive'] as const) {
+    for (const k of ['code', 'name', 'category', 'description', 'purpose', 'usageExamples', 'notes', 'isActive'] as const) {
       if (changes[k] !== undefined) data[k] = changes[k]
     }
 
@@ -105,7 +107,8 @@ export async function PATCH(req: NextRequest) {
         correlationId: r.correlationId,
         metadata: {
           before: {
-            code: existing.code, name: existing.name, description: existing.description,
+            code: existing.code, name: existing.name, category: existing.category,
+            description: existing.description,
             purpose: existing.purpose, usageExamples: existing.usageExamples, notes: existing.notes,
             isActive: existing.isActive,
           },

@@ -1,7 +1,7 @@
 'use client'
 
-// Jenis Surat (master prompt lanjutan D.1–D.3):
-// Kelola kode, nama, deskripsi, fungsi/tujuan, contoh penggunaan, catatan, status.
+// Jenis Surat (master prompt lanjutan D.1–D.3 + default config v1.4):
+// Kelola kode, nama, kategori, deskripsi, fungsi/tujuan, contoh penggunaan, catatan, status.
 // Semua keterangan tersimpan di DB — tooltip form Buat Surat memakai data terbaru.
 // Hapus fisik hanya untuk jenis tanpa histori; yang sudah dipakai diarsipkan (D.6).
 import { useState } from 'react'
@@ -23,6 +23,7 @@ interface LetterTypeRow {
   id: string
   code: string
   name: string
+  category: string | null
   description: string | null
   purpose: string | null
   usageExamples: string | null
@@ -34,6 +35,7 @@ interface LetterTypeRow {
 type FormState = {
   code: string
   name: string
+  category: string
   description: string
   purpose: string
   usageExamples: string
@@ -41,7 +43,16 @@ type FormState = {
   isActive: boolean
 }
 
-const EMPTY_FORM: FormState = { code: '', name: '', description: '', purpose: '', usageExamples: '', notes: '', isActive: true }
+// 5 kategori standar (default config v1.4) — saran isian, lembaga bisa menulis kategori sendiri.
+const CATEGORY_SUGGESTIONS = [
+  'Kebijakan & Keputusan',
+  'Tugas & Penugasan',
+  'Komunikasi & Koordinasi',
+  'Administrasi & Layanan',
+  'Pertanggungjawaban & Dokumentasi',
+]
+
+const EMPTY_FORM: FormState = { code: '', name: '', category: '', description: '', purpose: '', usageExamples: '', notes: '', isActive: true }
 
 export function LetterTypesView() {
   const qc = useQueryClient()
@@ -58,6 +69,7 @@ export function LetterTypesView() {
     mutationFn: () => {
       const body = {
         code: form.code, name: form.name,
+        category: form.category || null,
         description: form.description || null,
         purpose: form.purpose || null,
         usageExamples: form.usageExamples || null,
@@ -90,6 +102,7 @@ export function LetterTypesView() {
     setEditId(t.id)
     setForm({
       code: t.code, name: t.name,
+      category: t.category ?? '',
       description: t.description ?? '', purpose: t.purpose ?? '',
       usageExamples: t.usageExamples ?? '', notes: t.notes ?? '',
       isActive: t.isActive,
@@ -100,7 +113,7 @@ export function LetterTypesView() {
     <div>
       <PageHeader
         title="Jenis Surat"
-        description="Master jenis surat: kode, deskripsi, fungsi, dan contoh penggunaan. Keterangan ini tampil sebagai bantuan ⓘ pada form Buat Surat."
+        description="Master jenis surat: kode, kategori, deskripsi, fungsi, dan contoh penggunaan. Dikelola pusat (scope global) — semua unit melihat informasi yang sama; keterangan ini tampil sebagai bantuan ⓘ pada form Buat Surat."
       >
         <Button className="shadow-card" onClick={() => { closeForm(); setForm({ ...EMPTY_FORM }) }}>
           <Plus className="w-4 h-4 mr-1.5" /> Tambah Jenis
@@ -126,6 +139,7 @@ export function LetterTypesView() {
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
                     <TableHead className="font-semibold">Kode</TableHead>
                     <TableHead className="font-semibold min-w-44">Nama jenis</TableHead>
+                    <TableHead className="font-semibold hidden md:table-cell">Kategori</TableHead>
                     <TableHead className="font-semibold hidden lg:table-cell">Deskripsi</TableHead>
                     <TableHead className="font-semibold text-center">Surat</TableHead>
                     <TableHead className="font-semibold text-center">Aktif</TableHead>
@@ -133,10 +147,21 @@ export function LetterTypesView() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {letterTypes.data?.letterTypes.map((t) => (
+                  {[...letterTypes.data?.letterTypes ?? []]
+                    .sort((a, b) => (a.category ?? '~').localeCompare(b.category ?? '~', 'id') || a.code.localeCompare(b.code))
+                    .map((t) => (
                     <TableRow key={t.id} className={`transition-colors hover:bg-emerald-soft/40 ${!t.isActive ? 'opacity-60' : ''}`}>
                       <TableCell className="font-mono text-[12.5px] font-semibold">{t.code}</TableCell>
                       <TableCell className="text-[13.5px]">{t.name}</TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        {t.category ? (
+                          <span className="inline-flex rounded-full border border-emerald/25 bg-emerald-soft px-2.5 py-0.5 text-[11px] font-semibold text-emerald-deep">
+                            {t.category}
+                          </span>
+                        ) : (
+                          <span className="text-[12px] text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-[12px] text-muted-foreground hidden lg:table-cell max-w-64 truncate">{t.description ?? '—'}</TableCell>
                       <TableCell className="text-center text-[12.5px] font-semibold">{t._count?.letters ?? 0}</TableCell>
                       <TableCell className="text-center">
@@ -194,7 +219,21 @@ export function LetterTypesView() {
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-[12px] font-semibold">Deskripsi / kategori</Label>
+              <Label className="text-[12px] font-semibold">Kategori</Label>
+              <Input
+                list="lt-category-suggestions"
+                value={form.category}
+                className="bg-surface"
+                onChange={(e) => setForm({ ...form, category: e.target.value })}
+                placeholder="mis. Administrasi & Layanan"
+              />
+              <datalist id="lt-category-suggestions">
+                {CATEGORY_SUGGESTIONS.map((c) => <option key={c} value={c} />)}
+              </datalist>
+              <p className="text-[11px] text-muted-foreground">Kelompok navigasi pada form Buat Surat — pilih saran standar atau tulis kategori lembaga Anda.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[12px] font-semibold">Deskripsi</Label>
               <Textarea value={form.description} className="bg-surface resize-none" rows={2}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
                 placeholder="mis. Dokumen keputusan resmi yang ditetapkan pihak berwenang" />
@@ -245,6 +284,7 @@ export function LetterTypesView() {
           </DialogHeader>
           {detail && (
             <div className="space-y-3.5 text-[13px]">
+              <DetailBlock title="Kategori" value={detail.category} />
               <DetailBlock title="Deskripsi" value={detail.description} />
               <DetailBlock title="Fungsi / tujuan" value={detail.purpose} />
               <DetailBlock title="Contoh penggunaan" value={detail.usageExamples} list />

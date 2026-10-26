@@ -79,3 +79,28 @@ Pending work:
 3. Konfigurasi LiteSpeed vhost sirat.yapsidarussalam.or.id → 127.0.0.1:3901 (proxy_pass + X-Forwarded-Proto https)
 4. Smoke test full via https://sirat.yapsidarussalam.or.id
 5. Catat hasil deploy di /var/www/sirat/DEPLOYED.md
+
+---
+Task ID: 5 (v1.3 — Master Prompt Lanjutan)
+Agent: main (z-assistant)
+Task: Implementasi task001.md (domain A-O) end-to-end + deploy + e2e.
+
+Work Log:
+- Schema: Unit/Committee.description, LetterType.purpose/usageExamples/notes, LetterReference, BackupGrant, BackupEvent; migrasi versioned (0_init baseline + 20261026_v1_3_master_continuation via migrate resolve/deploy)
+- RBAC: +backup.export/backup.restore (terpisah); resolveBackupCapabilities dari role global + BackupGrant per scope; auth/me mengembalikan kapabilitas backup per request
+- Backup: ZIP archiver + manifest (sha256 per entry), AES-256-GCM+scrypt (full wajib passphrase), scoped tanpa hash password, token unduhan satu kali, BackupEvent+audit, safety backup server-key (prune 5)
+- Restore: validasi manifest/zip-safety/path-traversal/schema-fingerprint/konsistensi counts; FULL=ganti-transaksional (urutan FK benar); SCOPED=merge-amd (existing kept, konflik ditolak, counter tak turun); re-auth password + confirm RESTORE; lock paralel; blob dipromosikan pasca-commit
+- Referensi surat: LetterReference, autocomplete scope-filtered, exact-match auto-link backend, manual text, immutable setelah final
+- Surat Terkait: dua arah + rantai BFS (max 4 hop/30 node), scope per node
+- Master data: edit unit/committee (kode/nama/keterangan/status), DELETE guarded (hapus fisik hanya tanpa dependensi; namespace kosong auto-bersih), label "Unit / Departemen", kolom Aksi sejajar
+- Jenis surat: field lengkap + detail view + delete guarded; tooltip ⓘ diperkaya
+- UI: BackupView baru (kapabilitas/buat/restore/grant/riwayat), Panduan Role di Pengguna, nav v1.3
+- Docs: ROLE-PERMISSION.md, BACKUP-RESTORE.md, JENIS-SURAT.md, NOMOR-SURAT-RELASI.md, PERMISSION-MATRIX update, RUNBOOK update, scripts/decrypt-backup.mjs
+- Tests: 82 vitest (numbering 23 + rbac 27 + backup-format 25 + references 7) — semua PASS
+- E2E: Part A produksi non-destruktif 29/29 PASS; Part B instance terisolasi (port 3902, DB sirat_restore_test) 38/38 PASS — termasuk full restore roundtrip & scoped merge; produksi TIDAK di-restore
+- Deploy: npm install, prisma generate, migrate deploy, build, restart; commit v1.3 (98c1b0f) + v1.3.1 (6f59c62)
+
+Stage Summary:
+- Master prompt lanjutan terimplementasi penuh; VPS terupdate (sirat.yapsidarussalam.or.id, port 3901 HTTPS)
+- BackupEvent produksi mencatat operasi e2e (8 event); DB produksi bersih dari data test (2 user, 0 surat)
+- Lingkungan test (DB sirat_restore_test, /var/lib/sirat-test, port 3902) sudah dibersihkan

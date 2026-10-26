@@ -143,7 +143,8 @@ model LetterType {
   id            String   @id @default(cuid())
   code          String   @unique // snapshot dicetak saat terbit; perubahan kode hanya utk terbitan baru
   name          String
-  description   String?  // keterangan/kategori utk tooltip "Kode Surat" (master prompt C)
+  category      String?  // kelompok navigasi (5 kategori standar) — default config v1.4
+  description   String?  // keterangan singkat utk tooltip "Kode Surat" (master prompt C)
   purpose       String?  // fungsi/tujuan jenis surat (master prompt lanjutan D.2)
   usageExamples String?  // contoh penggunaan, dipisah baris (D.2)
   notes         String?  // catatan/petunjuk tambahan (D.2)

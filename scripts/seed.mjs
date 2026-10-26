@@ -1,14 +1,22 @@
 // Seed SIRAT — preset awal sesuai Blueprint baseline 1.1 & master prompt:
 // - Application Identity: SIRAT YAPSI Darussalam
 // - 7 unit permanen (YAPSI/PP, KB, RA, MI, MTs, Pondok Pesantren, Rumah Tahfidz)
-// - 8 jenis surat + kode persis lampiran workbook
+// - 13 jenis surat kaya keterangan (default config v1.4): scripts/letter-types-defaults.json
+//   (8 kode lampiran workbook + 5 jenis umum tambahan; kategori/deskripsi/fungsi/contoh/catatan)
 // - Profil preset YAPSI (format workbook) versi DRAFT (aktivasi eksplisit pemilik)
 // - Namespace default per unit (counter terpisah antar unit)
 // Jalankan: bun scripts/seed.mjs (atau node scripts/seed.mjs)
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 
 const prisma = new PrismaClient()
+
+const DEFAULTS = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'letter-types-defaults.json'), 'utf8'),
+)
 
 const PRESET_DSL = {
   version: 1,
@@ -33,16 +41,11 @@ const UNITS = [
   { code: 'RT', name: 'Rumah Tahfidz' },
 ]
 
-const LETTER_TYPES = [
-  { code: 'SR', name: 'REKOMENDASI' },
-  { code: 'SE', name: 'SURAT EDARAN' },
-  { code: 'SK-PENGESAHAN', name: 'SK GURU/KEPALA' },
-  { code: 'SPB', name: 'PEMBERITAHUAN' },
-  { code: 'UND', name: 'UNDANGAN' },
-  { code: 'SPR', name: 'PERMOHONAN' },
-  { code: 'SPT', name: 'PERNYATAAN' },
-  { code: 'BA', name: 'BERITA ACARA' },
-]
+// Jenis surat default config (v1.4) — dipakai saat instalasi baru.
+// Katalog lengkap + keterangannya ada di scripts/letter-types-defaults.json agar
+// mudah disesuaikan lembaga lain tanpa menyentuh kode. Untuk instalasi yang SUDAH
+// berjalan, gunakan scripts/backfill-letter-types.mjs (tidak menimpa edit manual).
+const LETTER_TYPES = DEFAULTS.letterTypes
 
 async function main() {
   // App identity

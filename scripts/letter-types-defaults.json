@@ -1,0 +1,135 @@
+{
+  "$comment": [
+    "Katalog default Jenis Surat SIRAT — 'default config' agar instalasi baru (di lembaga mana pun) langsung informatif bagi pengguna pertama kali.",
+    "Dipakai oleh: scripts/seed.mjs (instalasi baru) dan scripts/backfill-letter-types.mjs (instalasi eksisting).",
+    "Field: category = kelompok navigasi (5 kategori standar); description = deskripsi singkat; purpose = fungsi/tujuan;",
+    "usageExamples = contoh penggunaan, satu per baris; notes = petunjuk praktis + pembeda dari jenis serupa.",
+    "Batas kolom DB: description<=500, purpose<=500, usageExamples<=1000, notes<=500 karakter."
+  ],
+  "categories": [
+    "Kebijakan & Keputusan",
+    "Tugas & Penugasan",
+    "Komunikasi & Koordinasi",
+    "Administrasi & Layanan",
+    "Pertanggungjawaban & Dokumentasi"
+  ],
+  "letterTypes": [
+    {
+      "code": "SE",
+      "name": "SURAT EDARAN",
+      "category": "Kebijakan & Keputusan",
+      "description": "Surat resmi dari pimpinan yang menyampaikan kebijakan, aturan, atau SOP internal kepada seluruh atau sebagian unit dan personel yayasan agar dilaksanakan secara seragam.",
+      "purpose": "Memberlakukan dan menyosialisasikan ketentuan internal (SOP, kebijakan baru, perubahan prosedur) secara resmi dan mengikat bagi penerima di dalam organisasi, sekaligus menjadi acuan tertulis saat pelaksanaannya diverifikasi.",
+      "usageExamples": "Edaran pemberlakuan SOP penerimaan siswa baru\nEdaran ketentuan seragam dan jadwal kegiatan harian\nEdaran kebijakan cuti dan perizinan karyawan\nEdaran tata tertib selama bulan Ramadan",
+      "notes": "Bersifat INTERNAL dan mengatur banyak orang sekaligus. Bila hanya memanggil pihak tertentu untuk hadir pada acara, gunakan UND; bila menetapkan status/jabatan secara final, gunakan SK."
+    },
+    {
+      "code": "SK",
+      "name": "SURAT KEPUTUSAN",
+      "category": "Kebijakan & Keputusan",
+      "description": "Surat yang menetapkan sesuatu secara final oleh pihak berwenang — paling sering menyangkut jabatan yang melekat pada guru dan karyawan: pengangkatan, pemberhentian, penempatan, dan beban kerja.",
+      "purpose": "Memberi dasar resmi atas penetapan jabatan, tugas struktural, pembentukan panitia, atau keputusan penting lainnya; berlaku selama masa yang ditetapkan dan hanya dapat diubah atau dicabut dengan SK baru.",
+      "usageExamples": "SK pengangkatan guru/karyawan\nSK penugasan wali kelas, kepala TU, atau pembina ekstrakurikuler\nSK pembentukan panitia kegiatan (tim kerja)\nSK pemberhentian dengan hormat",
+      "notes": "Berorientasi JABATAN (menetapkan status yang melekat pada seseorang). Untuk penugasan sesaat dengan rentang waktu tertentu gunakan ST (Surat Tugas). Cantumkan dasar penetapan dan masa berlaku."
+    },
+    {
+      "code": "ST",
+      "name": "SURAT TUGAS",
+      "category": "Tugas & Penugasan",
+      "description": "Surat yang menugaskan satu atau beberapa personel melaksanakan kegiatan tertentu dengan rentang waktu yang jelas, dilakukan atas nama dan membawa amanat lembaga.",
+      "purpose": "Memberi dasar resmi dan pertanggungjawaban atas penugasan — termasuk dasar pencairan anggaran/transport — serta melindungi personel yang ditugaskan karena bertinduk atas nama lembaga.",
+      "usageExamples": "Tugas mengikuti pelatihan, workshop, atau bimbingan teknis\nTugas sebagai pengawas/petugas ujian semester\nTugas mewakili lembaga dalam lomba atau kompetisi\nTugas mengantar santri/siswa ke kegiatan di luar lembaga",
+      "notes": "Untuk penugasan SESAAT (punya awal dan akhir). Penugasan jabatan jangka panjang gunakan SK. Sebutkan nama lengkap, NIP/NIK, serta lama penugasan dengan jelas."
+    },
+    {
+      "code": "UND",
+      "name": "UNDANGAN",
+      "category": "Komunikasi & Koordinasi",
+      "description": "Surat resmi yang menghadirkan pihak-pihak tertentu pada rapat, acara, atau kegiatan, pada waktu dan tempat yang ditentukan.",
+      "purpose": "Memastikan kehadiran terencana dan tepat sasaran; menjelaskan agenda, waktu, tempat, serta hal-hal yang perlu dipersiapkan peserta sebelum acara berlangsung.",
+      "usageExamples": "Undangan rapat yayasan / rapat dewan guru\nUndangan wali murid (class meeting, pembagian rapor)\nUndangan pengajian atau acara keluarga besar lembaga\nUndangan koordinasi dengan dinas atau pihak ketiga",
+      "notes": "Selalu cantumkan hari-tanggal, waktu, tempat, agenda, dan kontak. Bila penerima cukup mengetahui tanpa perlu hadir, gunakan SPB (Pemberitahuan)."
+    },
+    {
+      "code": "SPB",
+      "name": "PEMBERITAHUAN",
+      "category": "Komunikasi & Koordinasi",
+      "description": "Surat yang memberitahukan informasi resmi kepada pihak terkait tanpa mengharuskan mereka hadir atau membalas.",
+      "purpose": "Memastikan kebijakan, perubahan, atau kejadian penting diketahui secara tertulis dan terdokumentasi, sehingga tidak ada pihak yang tertinggal informasi resmi dari lembaga.",
+      "usageExamples": "Pemberitahuan libur sekolah / perubahan jam KBM\nPemberitahuan pelaksanaan ujian atau kegiatan besar\nPemberitahuan penerimaan siswa/santri baru\nPemberitahuan penutupan layanan unit untuk sementara",
+      "notes": "Tidak menuntut kehadiran (beda dengan UND) dan tidak menetapkan kebijakan baru (beda dengan SE). Fokus pada informasi yang perlu diketahui penerima."
+    },
+    {
+      "code": "ND",
+      "name": "NOTA DINAS",
+      "category": "Komunikasi & Koordinasi",
+      "description": "Surat ringkas untuk komunikasi kedinasan INTERNAL antar unit/jabatan di lingkungan yayasan — lebih luwes daripada surat resmi namun tetap terdokumentasi.",
+      "purpose": "Mengajukan usulan, meminta data atau klarifikasi, dan memberi instruksi rutin antar bagian dengan cepat, tanpa prosedur lengkap surat keluar.",
+      "usageExamples": "Usulan pembelian alat/media ke bagian umum\nPermintaan data guru/santri kepada TU\nInstruksi persiapan acara lintas unit\nKlarifikasi penggunaan anggaran kepada pengurus",
+      "notes": "Hanya untuk komunikasi INTERNAL. Untuk pihak di luar lembaga gunakan surat resmi keluar (SPB, UND, SPR, dsb.) dengan kop lengkap."
+    },
+    {
+      "code": "SPG",
+      "name": "SURAT PENGANTAR",
+      "category": "Komunikasi & Koordinasi",
+      "description": "Surat yang menyertakan pengiriman dokumen, berkas, atau barang dari lembaga kepada pihak penerima, disertai rincian isi yang dikirim.",
+      "purpose": "Mencatat apa yang diserahkan, kepada siapa, dan untuk keperluan apa — memudahkan penelusuran arsip dokumen atau barang yang berpindah tangan.",
+      "usageExamples": "Pengantar berkas siswa ke madrasah jenjang berikutnya\nPengantar laporan keuangan unit ke pengurus pusat\nPengantar dokumen ke dinas / kelurahan / kecamatan\nPengantar penyerahan barang atau bantuan",
+      "notes": "Biasanya singkat (satu halaman) dan berperan sebagai sampul dokumen utama. Rincikan jenis dan jumlah berkas agar mudah diverifikasi penerima."
+    },
+    {
+      "code": "SPR",
+      "name": "PERMOHONAN",
+      "category": "Administrasi & Layanan",
+      "description": "Surat pengajuan resmi kepada pihak berwenang — di dalam yayasan maupun ke instansi atau donatur luar — untuk memperoleh izin, bantuan, fasilitas, atau layanan.",
+      "purpose": "Mengajukan kebutuhan secara formal agar dapat diproses, dinilai, dan dilacak sampai ada keputusan (disetujui atau ditolak) oleh penerima permohonan.",
+      "usageExamples": "Permohonan bantuan dana, buku, atau alat kepada donatur/instansi\nPermohonan izin kegiatan kepada kelurahan/dinas\nPermohonan cuti atau izin tidak mengajar\nPermohonan penggunaan fasilitas (aula, lapangan)",
+      "notes": "Jelaskan tujuan, latar belakang, dan rincian yang diminta secara spesifik. Permohonan yang disetujui biasanya ditindaklanjuti dengan SK atau surat balasan."
+    },
+    {
+      "code": "SR",
+      "name": "REKOMENDASI",
+      "category": "Administrasi & Layanan",
+      "description": "Surat yang merekomendasikan seseorang atau lembaga atas kelayakan, kredibilitas, atau kesesuaiannya dengan keperluan tertentu.",
+      "purpose": "Menjadi dasar pertimbangan pihak ketiga; menegaskan bahwa lembaga mengenal, mengakui, dan mendukung pihak yang direkomendasikan.",
+      "usageExamples": "Rekomendasi siswa/santri untuk beasiswa\nRekomendasi karyawan untuk melanjutkan studi\nRekomendasi lembaga untuk program kerja sama\nRekomendasi penggunaan nama/logo yayasan",
+      "notes": "Wajib menyebut keperluan penerbitan rekomendasi. Diterbitkan atas kewenangan pimpinan unit/yayasan — bukan atas nama pribadi."
+    },
+    {
+      "code": "SKET",
+      "name": "SURAT KETERANGAN",
+      "category": "Administrasi & Layanan",
+      "description": "Surat yang menerangkan keadaan atau fakta resmi tentang seseorang/lembaga, sebagaimana catatan yang dimiliki lembaga.",
+      "purpose": "Menjawab kebutuhan administrasi pihak ketiga (bank, instansi, madrasah lain) yang meminta bukti keterangan tertulis dari lembaga.",
+      "usageExamples": "Keterangan aktif mengajar / aktif belajar\nKeterangan penghasilan karyawan\nKeterangan domisili santri/siswa\nKeterangan kehilangan dokumen (ijazah, buku)",
+      "notes": "Berisi FAKTA sebagaimana catatan lembaga — bukan dukungan atau opini (beda dengan REKOMENDASI). Hanya diterbitkan atas data yang terverifikasi di unit."
+    },
+    {
+      "code": "SKA",
+      "name": "SURAT KUASA",
+      "category": "Administrasi & Layanan",
+      "description": "Surat yang memberikan kuasa kepada pihak lain untuk mewakili atau melakukan tindakan tertentu atas nama pemberi kuasa atau lembaga.",
+      "purpose": "Menjamin tindakan penerima kuasa diakui secara internal dan dapat diterima pihak ketiga, karena ada penugasan tertulis yang jelas batasnya.",
+      "usageExamples": "Kuasa mengambil dokumen, ijazah, atau sertifikat\nKuasa mengurus perpanjangan izin ke dinas\nKuasa menerima barang/dana atas nama lembaga\nKuasa mewakili pimpinan dalam acara tertentu",
+      "notes": "Sebutkan tindakan yang dikuasakan secara spesifik beserta masa berlaku kuasa. Untuk urusan bernilai besar, lengkapi persetujuan pengurus."
+    },
+    {
+      "code": "SPT",
+      "name": "PERNYATAAN",
+      "category": "Pertanggungjawaban & Dokumentasi",
+      "description": "Surat pernyataan resmi atas kesanggupan, pembenaran data, atau komitmen mematuhi ketentuan, yang ditandatangani pihak yang menyatakan.",
+      "purpose": "Mengikat penandatangan secara tertulis atas apa yang dinyatakannya; menjadi dasar pertanggungjawaban bila pernyataan dilanggar di kemudian hari.",
+      "usageExamples": "Pernyataan kesanggupan menjalankan tugas\nPernyataan kebenaran data/dokumen\nPernyataan belum menerima beasiswa lain\nPernyataan kepatuhan tata tertib santri/siswa",
+      "notes": "Ditandatangani PIHAK YANG MENYATAKAN (bukan pimpinan); bila diperlukan, dilegalisir pimpinan unit. Sering dilampirkan pada surat permohonan (SPR)."
+    },
+    {
+      "code": "BA",
+      "name": "BERITA ACARA",
+      "category": "Pertanggungjawaban & Dokumentasi",
+      "description": "Dokumen resmi yang merekam peristiwa atau keputusan yang benar-benar terjadi: hasil rapat, serah terima, pemeriksaan, atau pengambilan.",
+      "purpose": "Menjadi bukti otentik dan kronologis; melindungi para pihak yang terlibat bila terjadi sengketa atau perbedaan tafsir di kemudian hari.",
+      "usageExamples": "Berita acara hasil rapat (keputusan rapat)\nBerita acara serah terima jabatan / aset / kunci\nBerita acara pemeriksaan barang rusak/hilang\nBerita acara pengambilan ijazah/dokumen",
+      "notes": "Ditandatangani SELURUH pihak yang hadir/terlibat, ditambah saksi bila ada. Sering diarsipkan sebagai lampiran surat lain (mis. ST)."
+    }
+  ]
+}

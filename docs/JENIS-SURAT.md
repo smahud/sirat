@@ -31,11 +31,51 @@ di profil penomoran; jenis surat hanya menyumbang **kode** sebagai salah satu ko
 |---|---|
 | Kode | `SK` |
 | Nama jenis | `SURAT KEPUTUSAN` |
-| Deskripsi/kategori | Dokumen keputusan resmi yang ditetapkan pihak berwenang |
-| Fungsi/tujuan | Menetapkan kebijakan, pengangkatan, penugasan, keputusan administratif |
-| Contoh penggunaan (per baris) | SK Pengangkatan · SK Perpanjangan Jabatan · SK Penetapan Panitia |
-| Catatan/petunjuk | Wajib mencantumkan dasar hukum |
+| **Kategori** (v1.4) | `Kebijakan & Keputusan` |
+| Deskripsi | Surat yang menetapkan sesuatu secara final oleh pihak berwenang |
+| Fungsi/tujuan | Memberi dasar resmi atas penetapan jabatan, tugas struktural, … |
+| Contoh penggunaan (per baris) | SK pengangkatan guru · SK penugasan wali kelas · SK panitia |
+| Catatan/petunjuk | Berorientasi jabatan; penugasan sesaat gunakan ST |
 | Status aktif | Ya/Tidak |
+
+### Kategori (default config v1.4)
+
+Kategori adalah **kelompok navigasi** — dipakai untuk mengurutkan daftar jenis surat
+serta mengelompokkan pilihan pada dropdown form Buat Surat, sehingga pengguna baru
+langsung menemukan jenis yang tepat tanpa harus menghafal kode. Lima kategori standar
+(bukan paksaan — lembaga boleh menulis kategorinya sendiri):
+
+1. **Kebijakan & Keputusan** — menetapkan/mengatur (SE, SK)
+2. **Tugas & Penugasan** — menugaskan orang (ST)
+3. **Komunikasi & Koordinasi** — menyampaikan informasi (UND, SPB, ND, SPG)
+4. **Administrasi & Layanan** — layanan sehari-hari (SPR, SR, SKET, SKA)
+5. **Pertanggungjawaban & Dokumentasi** — merekam/menjadi bukti (SPT, BA)
+
+## 3a. Katalog default (default config v1.4)
+
+Instalasi baru otomatis mendapat **13 jenis surat lengkap dengan panduannya**
+(sumber: `scripts/letter-types-defaults.json` — silakan disesuaikan kebutuhan lembaga;
+8 kode berasal dari lampiran workbook YAPSI + 5 jenis umum tambahan):
+
+| Kode | Nama | Kategori | Inti panduan |
+|---|---|---|---|
+| SE | SURAT EDARAN | Kebijakan & Keputusan | Menyosialisasikan SOP/kebijakan internal secara seragam & mengikat |
+| SK | SURAT KEPUTUSAN | Kebijakan & Keputusan | Menetapkan secara final — orientasi **jabatan** guru/karyawan |
+| ST | SURAT TUGAS | Tugas & Penugasan | Penugasan **sesaat** dengan rentang waktu; dasar pertanggungjawaban |
+| UND | UNDANGAN | Komunikasi & Koordinasi | Menghadirkan pihak pada rapat/acara (waktu-tempat-agenda) |
+| SPB | PEMBERITAHUAN | Komunikasi & Koordinasi | Memberi tahu tanpa menuntut kehadiran (≠ UND, ≠ SE) |
+| ND | NOTA DINAS | Komunikasi & Koordinasi | Komunikasi internal antar unit — ringkas, tetap terdokumentasi |
+| SPG | SURAT PENGANTAR | Komunikasi & Koordinasi | Sampul pengiriman berkas/dokumen dengan rincian isi |
+| SPR | PERMOHONAN | Administrasi & Layanan | Pengajuan izin/bantuan/fasilitas agar diproses & dilacak |
+| SR | REKOMENDASI | Administrasi & Layanan | Dukungan resmi atas kelayakan seseorang/lembaga (bukan opini pribadi) |
+| SKET | SURAT KETERANGAN | Administrasi & Layanan | Menerangkan **fakta** dari catatan lembaga (≠ rekomendasi) |
+| SKA | SURAT KUASA | Administrasi & Layanan | Memberi kuasa tindakan tertentu, spesifik & berbatas waktu |
+| SPT | PERNYATAAN | Pertanggungjawaban & Dokumentasi | Mengikat penandatangan atas kesanggupan/kebenaran data |
+| BA | BERITA ACARA | Pertanggungjawaban & Dokumentasi | Merekam peristiwa nyata; ditandatangani seluruh pihak terlibat |
+
+Penerapan pada instalasi yang sudah berjalan: `node scripts/backfill-letter-types.mjs`
+(isi field kosong saja — tidak menimpa edit manual; `--force` untuk kanonikalisasi,
+`--dry-run` untuk pratinjau). Instalasi baru cukup `node scripts/seed.mjs`.
 
 ## 4. Siapa yang mengelola & dampak perubahan
 
@@ -55,8 +95,8 @@ di profil penomoran; jenis surat hanya menyumbang **kode** sebagai salah satu ko
 
 ## 6. Perilaku di form Buat Surat (D.5)
 
-- Hanya jenis **aktif** yang bisa dipilih.
+- Hanya jenis **aktif** yang bisa dipilih; daftar **dikelompokkan per kategori** agar mudah dinavigasi.
 - Ikon **ⓘ** di samping label "Jenis surat" menampilkan keterangan lengkap dari master data:
-  kode, nama/klasifikasi, deskripsi, fungsi, contoh penggunaan, catatan, jumlah pemakaian.
+  kode, kategori, nama/klasifikasi, deskripsi, fungsi, contoh penggunaan, catatan, jumlah pemakaian.
   Mendukung hover (desktop), tap (layar sentuh), dan keyboard (fokus + Enter/Space).
 - Keterangan selalu diambil dari DB — saat Super Admin mengubah master, seluruh UI langsung memakai data terbaru.
