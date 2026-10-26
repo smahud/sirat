@@ -4,6 +4,7 @@ import { handle } from '@/lib/api-helpers'
 import { requirePermission } from '@/lib/api-helpers'
 import { writeAudit } from '@/lib/audit'
 import { letterScopeFilter } from '@/lib/rbac'
+import { csvCell } from '@/lib/constants'
 
 /** GET /api/export/letters.csv — FR-025: export menghormati scope permission. */
 export async function GET(req: NextRequest) {
@@ -48,7 +49,7 @@ export async function GET(req: NextRequest) {
       l.issuer?.fullName ?? '',
       l.issuedAt ? l.issuedAt.toISOString() : '',
       l.isImported ? (l.legacyNumber ?? '') : '',
-    ])
+    ].map(csvCell)) // formula-injection sanitize per sel
 
     const csv = [header, ...rows]
       .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))

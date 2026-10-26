@@ -7,6 +7,7 @@ import { writeAudit } from '@/lib/audit'
 import { parseDsl } from '@/lib/numbering/dsl'
 import { validateDslForActivation } from '@/lib/numbering/validate'
 import { RESET_POLICIES, DATE_SOURCES } from '@/lib/constants'
+import { canManageUnit, canManageCommittee } from '@/lib/rbac'
 
 const activateSchema = z.object({
   versionId: z.string().min(1),
@@ -38,6 +39,15 @@ export async function POST(req: NextRequest) {
     })
     if (!version) return fail(404, 'NOT_FOUND', 'Versi profil tidak ditemukan')
     if (version.status === 'RETIRED') return fail(409, 'RETIRED', 'Versi sudah dipensiunkan dan immutable')
+
+    // Scope validation (audit #4): aktivasi hanya oleh pengelola konteks profil
+    const profile0 = version.profile
+    const canManage = profile0.committeeId
+      ? canManageCommittee(r.user, { id: profile0.committeeId, unitId: profile0.ownerId })
+      : canManageUnit(r.user, profile0.ownerId)
+    if (!canManage) {
+      return fail(403, 'FORBIDDEN', 'Anda tidak memiliki wewenang mengaktifkan profil ini')
+    }
 
     // Validasi DSL sebelum aktivasi
     const dsl = parseDsl(version.dsl)

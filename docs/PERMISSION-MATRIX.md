@@ -22,13 +22,33 @@ RBAC scoped (Blueprint §9 + §16.5, NFR-002). Permission dihitung dari
 | archive.download      | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | archive.trash         | ✅ | — | ✅ | ✅ | — | — | — |
 | archive.restore       | ✅ | — | ✅ | ✅ | — | — | — |
-| audit.view            | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
+| audit.view            | ✅ | ✅ | — | — | — | — | ✅ |
 | import.manage         | ✅ | ✅ | ✅* | ✅* | — | — | — |
 | export.run            | ✅ | ✅ | ✅ | ✅ | — | — | — |
 | health.view           | ✅ | ✅ | ✅ | ✅ | — | — | — |
 
 \* = terbatas scope unit/committee yang di-assign. SYSTEM_ADMIN punya `*`
 (wildcard semua permission).
+
+> **Perubahan audit trail (v1.2):** `audit.view` dicabut dari UNIT_ADMIN dan
+> COMMITTEE_ADMIN. `AuditEvent` tidak memiliki kolom scope sehingga trail bersifat
+global — menampilkannya ke admin unit berarti kebocoran informasi lintas scope.
+Audit hanya dapat dilihat role global (SYSTEM_ADMIN, ORG_ADMIN, AUDITOR).
+
+## Aturan akses surat (E — kepanitiaan)
+
+Permission `letter.create`/`letter.issue` saja TIDAK cukup; tiap request
+validasi ulang konteks penerbitan:
+
+- Surat **reguler unit**: wajib `canAccessUnit` (assignment unitId / scope.all).
+- Surat **kepanitiaan**: wajib `canAccessCommittee` — hanya dua jalan eksplisit:
+  assignment `committeeId` langsung, ATAU assignment unit dengan
+  `includeCommittees=true`. **Akses unit biasa tidak cukup** untuk membuat,
+  mengubah draft menjadi surat panitia, maupun menerbitkan surat panitia.
+- Mencabut assignment / flag includeCommittees langsung berlaku pada request
+  berikutnya (scope di-resolve per request, tidak di-cache di sesi).
+- `PATCH /api/letters/:id`: DRAFT butuh `letter.create`; koreksi metadata surat
+  TERBIT butuh `letter.cancel` (UNIT_ADMIN+). VIEWER tidak bisa mengubah apa pun.
 
 ## Scope inheritance (Blueprint §16.5)
 
@@ -41,7 +61,13 @@ RBAC scoped (Blueprint §9 + §16.5, NFR-002). Permission dihitung dari
 - **Assignment committeeId** saja: akses hanya committee itu (tidak termasuk
   surat reguler parent unit atau committee lain di parent yang sama).
 - **Admin unit TIDAK otomatis admin sistem**: tidak bisa upgrade role sendiri
-  atau membuat SYSTEM_ADMIN baru.
+  atau membuat SYSTEM_ADMIN baru, dan tidak bisa menyentuh user dengan role di
+  atas wewenangnya (PATCH /api/users).
+- **Delegasi terikat scope pengelolaan**: admin unit hanya bisa membuat/mengubah
+  user dengan assignment pada unit/committee yang dikelolanya
+  (`assertAssignmentsInScope`), membuat committee di unitnya
+  (`canManageUnit`), dan membuat/mengaktifkan profil penomoran untuk konteks
+  yang dikelolanya (`canManageUnit` / `canManageCommittee`).
 
 ## Filter prisma (lib/rbac.ts)
 
@@ -49,20 +75,31 @@ RBAC scoped (Blueprint §9 + §16.5, NFR-002). Permission dihitung dari
   - scope.all: undefined (no filter)
   - else: `OR [issuingUnitId IN unitIds, committeeId IN committeeIds,
     committee.unitId IN unitIdsWithAllCommittees, issuingUnitId IN
-    unitIdsWithAllCommittees]`
+    unitIdsWithAllCommittees]` (klausa kosong dilewati; tanpa scope → tidak
+    melihat apa pun)
 - `archiveScopeFilter(user)`: `{ letter: letterScopeFilter(user) }` — filter
   berkas arsip via relasi letter.
+- `unitVisibilityFilter(user)`: unit yang terlihat di master = unit assignment
+  ∪ unit induk dari committee assignment (konteks penerbitan surat panitia).
+- `committeeVisibilityFilter(user)`: committee di bawah unit yang dikelola ∪
+  committee yang di-assign langsung.
+- `profileVisibilityFilter(user)`: profil milik unit yang dikelola ∪ profil
+  committee yang di-assign.
 
 ## Verifikasi (T07 — URL/ID tampering)
 
-Test negatif wajib lulus:
+Test negatif wajib lulus (unit test `tests/rbac.test.ts` + verifikasi manual):
 1. Operator dengan akses unit MI tidak bisa `GET /api/letters/<id_yapsi>`.
 2. Operator tanpa akses committee tidak bisa `POST /api/letters` dengan
-   `committeeId` milik unit lain.
-3. Viewer tidak bisa `POST /api/letters/<id>/issue` (403).
+   `committeeId` milik unit lain — termasuk operator unit induk TANPA flag
+   includeCommittees (E.2).
+3. Viewer tidak bisa `POST /api/letters/<id>/issue` (403) dan tidak bisa
+   `PATCH /api/letters/<id>` (403).
 4. URL download dengan `archiveVersionId` milik surat di unit lain → 403
    atau 404 (Blueprint: "404 untuk menyamarkan objek di luar scope secara
    konsisten").
+5. Unit admin tidak bisa membuat committee/profil/user di unit lain (403 SCOPE).
+6. GET /api/users tidak pernah mengembalikan passwordHash.
 
 ## Audit deny
 

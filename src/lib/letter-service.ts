@@ -80,8 +80,14 @@ export async function issueLetter(params: {
           throw new ServiceError(400, 'NOT_DRAFT', `Surat berstatus ${letter.status} tidak dapat diterbitkan`)
         }
 
-        // 3) Validasi ulang konteks (deaktivasi paralel tidak lolos)
-        if (!canAccessUnit(actor, letter.issuingUnitId) && !canAccessCommittee(actor, { id: letter.committeeId ?? '', unitId: letter.issuingUnitId })) {
+        // 3) Validasi ulang konteks (deaktivasi paralel tidak lolos).
+        // Surat KEPANITIAAN wajib akses committee (assignment langsung / includeCommittees
+        // eksplisit) — akses unit saja TIDAK cukup (Blueprint 16.5, master prompt E.2).
+        if (letter.committeeId) {
+          if (!canAccessCommittee(actor, { id: letter.committeeId, unitId: letter.issuingUnitId })) {
+            throw new ServiceError(403, 'FORBIDDEN', 'Anda tidak memiliki akses ke kepanitiaan penerbit surat ini')
+          }
+        } else if (!canAccessUnit(actor, letter.issuingUnitId)) {
           throw new ServiceError(403, 'FORBIDDEN', 'Anda tidak memiliki akses ke konteks penerbitan surat ini')
         }
         if (letter.issuingUnit.status !== 'ACTIVE') throw new ServiceError(409, 'UNIT_INACTIVE', 'Unit penerbit tidak aktif')

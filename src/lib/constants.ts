@@ -61,6 +61,16 @@ export function sanitizeSegment(s: string): string {
   return s.replace(/[^A-Za-z0-9\-_.]/g, '_').slice(0, 80)
 }
 
+/**
+ * Sanitasi sel CSV (formula injection / CSV injection): nilai yang diawali
+ * = + - @ tab atau CR di-prefix apostrof agar Excel/LibreOffice tidak
+  * mengeksekusinya sebagai formula (audit minor).
+ */
+export function csvCell(v: unknown): string {
+  const s = String(v ?? '')
+  return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s
+}
+
 /** Kode surat dengan padding minimum n digit (1000 tetap 1000). */
 export function padSequence(seq: number, padding: number): string {
   const s = String(Math.max(0, Math.floor(seq)))

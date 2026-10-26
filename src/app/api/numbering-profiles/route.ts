@@ -6,12 +6,15 @@ import { requirePermission } from '@/lib/api-helpers'
 import { writeAudit } from '@/lib/audit'
 import { dslSchema } from '@/lib/numbering/dsl'
 import { validateDslForActivation } from '@/lib/numbering/validate'
+import { profileVisibilityFilter, canManageUnit, canManageCommittee } from '@/lib/rbac'
 
 export async function GET() {
   return handle(async () => {
     const r = await requirePermission('letter.view')
     if ('error' in r) return r.error
+    // Scope-filtered: profil milik unit yang dikelola / panitia yang di-assign
     const profiles = await db.numberingProfile.findMany({
+      where: profileVisibilityFilter(r.user),
       include: {
         owner: { select: { id: true, code: true, name: true } },
         committee: { select: { id: true, code: true, name: true } },
@@ -46,6 +49,14 @@ export async function POST(req: NextRequest) {
     if (committeeId) {
       const committee = await db.committee.findUnique({ where: { id: committeeId } })
       if (!committee || committee.unitId !== ownerId) return fail(409, 'COMMITTEE_MISMATCH', 'Kepanitiaan tidak berada di bawah unit pemilik profil')
+    }
+    // Scope validation (audit #4): profil unit → wajib kelola unit; profil panitia →
+    // kelola unit induk ATAU admin committee itu sendiri
+    const allowed = committeeId
+      ? canManageCommittee(r.user, { id: committeeId, unitId: ownerId })
+      : canManageUnit(r.user, ownerId)
+    if (!allowed) {
+      return fail(403, 'FORBIDDEN', 'Anda tidak memiliki wewenang membuat profil untuk konteks ini')
     }
 
     const dup = await db.numberingProfile.findFirst({
@@ -91,6 +102,13 @@ export async function PUT(req: NextRequest) {
       include: { versions: { orderBy: { version: 'desc' }, take: 1 } },
     })
     if (!profile) return fail(404, 'NOT_FOUND', 'Profil tidak ditemukan')
+    // Scope validation (audit #4)
+    const canManage = profile.committeeId
+      ? canManageCommittee(r.user, { id: profile.committeeId, unitId: profile.ownerId })
+      : canManageUnit(r.user, profile.ownerId)
+    if (!canManage) {
+      return fail(403, 'FORBIDDEN', 'Anda tidak memiliki wewenang mengelola profil ini')
+    }
 
     const lastVersion = profile.versions[0]?.version ?? 0
     const version = await db.$transaction(async (tx) => {

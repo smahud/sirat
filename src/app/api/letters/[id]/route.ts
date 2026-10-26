@@ -2,9 +2,9 @@ import { NextRequest } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { ok, fail, handle, guardMutation, readJson } from '@/lib/api-helpers'
-import { requireUser } from '@/lib/api-helpers'
+import { requirePermission, requireUser } from '@/lib/api-helpers'
 import { writeAudit } from '@/lib/audit'
-import { letterScopeFilter } from '@/lib/rbac'
+import { letterScopeFilter, canAccessUnit, canAccessCommittee } from '@/lib/rbac'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
@@ -48,9 +48,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   return handle(async () => {
     const guard = await guardMutation(req)
     if (guard) return guard
-    const r = await requireUser()
-    if ('error' in r) return r.error
     const { id } = await params
+
+    // Muat surat dulu untuk menentukan izin per status (deni by default)
+    const probe = await db.letter.findUnique({ where: { id } })
+    if (!probe) return fail(404, 'NOT_FOUND', 'Surat tidak ditemukan')
+    // DRAFT (termasuk komponen nomor) → bagian alur pembuatan: letter.create.
+    // Koreksi metadata surat TERBIT → aksi lebih kuat: letter.cancel (UNIT_ADMIN+).
+    const neededPerm = probe.status === 'DRAFT' ? 'letter.create' : 'letter.cancel'
+    const r = await requirePermission(neededPerm)
+    if ('error' in r) return r.error
 
     const scope = letterScopeFilter(r.user)
     const letter = await db.letter.findFirst({ where: { id, ...(scope ?? {}) } })
@@ -73,6 +80,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           if (!committee || committee.unitId !== letter.issuingUnitId) {
             return fail(409, 'COMMITTEE_MISMATCH', 'Kepanitiaan tidak berada di bawah unit penerbit')
           }
+          if (committee.status !== 'ACTIVE') {
+            return fail(409, 'COMMITTEE_INACTIVE', 'Kepanitiaan tidak aktif')
+          }
+          // Konsisten dgn create/issue: pindah ke konteks kepanitiaan wajib akses committee
+          if (!canAccessCommittee(r.user, committee)) {
+            return fail(403, 'FORBIDDEN', 'Anda tidak memiliki akses ke kepanitiaan ini')
+          }
+        } else if (!canAccessUnit(r.user, letter.issuingUnitId)) {
+          // pindah ke surat reguler unit: wajib akses unit
+          return fail(403, 'FORBIDDEN', 'Anda tidak memiliki akses ke unit penerbit ini')
         }
         data.committeeId = body.committeeId
         before.committeeId = letter.committeeId

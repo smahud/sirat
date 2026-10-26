@@ -1,5 +1,11 @@
 // Scoped RBAC — deny by default (Blueprint 16.5).
 // Permission dihitung dari role global + assignment unit/kepanitiaan.
+// Konsep (master prompt E): user + role + scope_type + scope_id + permission.
+// - Assignment ≠ otomatis boleh semua aksi: tiap akses surat diperiksa per konteks
+//   (surat kepanitiaan WAJIB akses committee; akses unit saja tidak cukup).
+// - Intervensi user unit atas surat kepanitiaan = authorization eksplisit
+//   (assignment committee langsung ATAU flag includeCommittees per unit);
+//   mencabut assignment/flag langsung berlaku (scope di-resolve per request).
 import { db } from '@/lib/db'
 import { Role } from '@/lib/constants'
 
@@ -16,10 +22,13 @@ const OPERATOR_PERMS: Permission[] = [
   'letter.view', 'letter.create', 'letter.issue', 'archive.upload', 'archive.download',
 ]
 
+// audit.view dicabut dari UNIT_ADMIN/COMMITTEE_ADMIN: AuditEvent tidak punya kolom scope,
+// sehingga menampilkan trail global ke admin unit = kebocoran informasi lintas scope
+// (least privilege / deny by default). Audit hanya untuk role global.
 const UNIT_ADMIN_PERMS: Permission[] = [
   'committee.manage', 'user.manage', 'profile.manage', 'lettertype.manage',
   ...OPERATOR_PERMS, 'letter.cancel', 'archive.trash', 'archive.restore',
-  'audit.view', 'import.manage', 'export.run', 'health.view',
+  'import.manage', 'export.run', 'health.view',
 ]
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[] | '*'> = {
@@ -49,7 +58,8 @@ export interface UserScope {
   all: boolean                        // akses seluruh unit (role global)
   unitIds: string[]                   // unit yang di-assign langsung
   committeeIds: string[]              // panitia yang di-assign langsung
-  unitIdsWithAllCommittees: string[]  // unit dengan includeCommittees=true
+  unitIdsWithAllCommittees: string[]  // unit dengan includeCommittees=true (izin eksplisit surat panitia)
+  committeeUnitIds: string[]          // unit parent dari committee assignment (konteks penerbitan surat panitia)
 }
 
 export interface ResolvedUser extends SessionUser {
@@ -57,21 +67,30 @@ export interface ResolvedUser extends SessionUser {
 }
 
 export async function resolveScope(user: SessionUser): Promise<UserScope> {
-  if (GLOBAL_ROLES.includes(user.role)) return { all: true, unitIds: [], committeeIds: [], unitIdsWithAllCommittees: [] }
+  if (GLOBAL_ROLES.includes(user.role)) {
+    return { all: true, unitIds: [], committeeIds: [], unitIdsWithAllCommittees: [], committeeUnitIds: [] }
+  }
   const assignments = await db.accessAssignment.findMany({
     where: { userId: user.id },
+    include: { committee: { select: { unitId: true } } },
   })
   const unitIds: string[] = []
   const committeeIds: string[] = []
   const unitIdsWithAllCommittees: string[] = []
+  const committeeUnitIds: string[] = []
   for (const a of assignments) {
     if (a.unitId) {
       unitIds.push(a.unitId)
       if (a.includeCommittees) unitIdsWithAllCommittees.push(a.unitId)
     }
-    if (a.committeeId) committeeIds.push(a.committeeId)
+    if (a.committeeId) {
+      committeeIds.push(a.committeeId)
+      if (a.committee?.unitId && !committeeUnitIds.includes(a.committee.unitId)) {
+        committeeUnitIds.push(a.committee.unitId)
+      }
+    }
   }
-  return { all: false, unitIds, committeeIds, unitIdsWithAllCommittees }
+  return { all: false, unitIds, committeeIds, unitIdsWithAllCommittees, committeeUnitIds }
 }
 
 export function hasPermission(user: SessionUser, perm: Permission): boolean {
@@ -79,37 +98,87 @@ export function hasPermission(user: SessionUser, perm: Permission): boolean {
   return p === '*' || p.includes(perm)
 }
 
-/** Apakah user berhak mengakses konteks unit (untuk create/issue surat, dsb.) */
+/** Apakah user berhak mengakses konteks unit (untuk surat reguler unit, dsb.) */
 export function canAccessUnit(user: ResolvedUser, unitId: string): boolean {
   if (user.scope.all) return true
   return user.scope.unitIds.includes(unitId)
 }
 
-/** Apakah user berhak mengakses konteks kepanitiaan. */
+/**
+ * Apakah user berhak mengakses konteks kepanitiaan (untuk surat kepanitiaan).
+ * Hanya dua jalan eksplisit (master prompt E): assignment committee langsung,
+ * atau flag includeCommittees pada assignment unit. Akses unit biasa TIDAK cukup.
+ */
 export function canAccessCommittee(user: ResolvedUser, committee: { id: string; unitId: string }): boolean {
   if (user.scope.all) return true
   if (user.scope.committeeIds.includes(committee.id)) return true
-  // assignment unit + includeCommittees → semua panitia di bawah unit itu
   return user.scope.unitIdsWithAllCommittees.includes(committee.unitId)
+}
+
+/** Apakah user boleh MENGELOLA unit (buat committee/profil, kelola user di unit itu). */
+export function canManageUnit(user: ResolvedUser, unitId: string): boolean {
+  if (user.scope.all) return true
+  return user.scope.unitIds.includes(unitId)
+}
+
+/** Apakah user boleh mengelola kepanitiaan (admin unit induk, atau admin committee itu). */
+export function canManageCommittee(user: ResolvedUser, committee: { id: string; unitId: string }): boolean {
+  if (user.scope.all) return true
+  return user.scope.committeeIds.includes(committee.id) || user.scope.unitIds.includes(committee.unitId)
 }
 
 /** Filter prisma WHERE untuk surat yang boleh dilihat user. */
 export function letterScopeFilter(user: ResolvedUser) {
   if (user.scope.all) return undefined
   const committeeUnits = user.scope.unitIdsWithAllCommittees
-  return {
-    OR: [
-      { issuingUnitId: { in: user.scope.unitIds } },
-      { committeeId: { in: user.scope.committeeIds } },
-      ...(committeeUnits.length > 0 ? [{ committee: { unitId: { in: committeeUnits } } }] : []),
-      // unit dengan includeCommittees juga mencakup surat reguler unit tsb
-      { issuingUnitId: { in: committeeUnits } },
-    ],
+  const OR: Record<string, unknown>[] = []
+  if (user.scope.unitIds.length > 0) OR.push({ issuingUnitId: { in: user.scope.unitIds } })
+  if (user.scope.committeeIds.length > 0) OR.push({ committeeId: { in: user.scope.committeeIds } })
+  if (committeeUnits.length > 0) {
+    // unit dengan includeCommittees juga mencakup seluruh surat panitia unit tsb
+    OR.push({ committee: { unitId: { in: committeeUnits } } })
+    // ... serta surat reguler unit tsb
+    OR.push({ issuingUnitId: { in: committeeUnits } })
   }
+  if (OR.length === 0) return { id: { in: [] } } // tanpa scope apa pun → tidak melihat apa pun
+  return { OR }
 }
 
 /** Filter untuk berkas arsip (via relasi letter). */
 export function archiveScopeFilter(user: ResolvedUser) {
   const f = letterScopeFilter(user)
   return f ? { letter: f } : undefined
+}
+
+/**
+ * Unit yang boleh DILIHAT user pada dropdown/master (bukan berarti boleh menerbitkan
+ * surat reguler): unit assignment + unit parent dari committee assignment.
+ * Unit parent diperlukan sebagai konteks penerbitan surat kepanitiaan.
+ */
+export function unitVisibilityFilter(user: ResolvedUser) {
+  if (user.scope.all) return undefined
+  const ids = [...new Set([...user.scope.unitIds, ...user.scope.committeeUnitIds])]
+  return { id: { in: ids } }
+}
+
+/** Kepanitiaan yang terlihat user: di bawah unit yang dikelola, atau di-assign langsung. */
+export function committeeVisibilityFilter(user: ResolvedUser) {
+  if (user.scope.all) return undefined
+  return {
+    OR: [
+      { unitId: { in: user.scope.unitIds } },
+      { id: { in: user.scope.committeeIds } },
+    ],
+  }
+}
+
+/** Profil penomoran yang terlihat user: milik unit yang dikelola, atau panitia yang di-assign. */
+export function profileVisibilityFilter(user: ResolvedUser) {
+  if (user.scope.all) return undefined
+  return {
+    OR: [
+      { ownerId: { in: user.scope.unitIds } },
+      { committeeId: { in: user.scope.committeeIds } },
+    ],
+  }
 }

@@ -7,13 +7,19 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
-import { Info, Hash, Building2, CalendarDays, User, MessageSquareText, StickyNote, Users2 } from 'lucide-react'
+import { Info, Hash, Building2, CalendarDays, User, MessageSquareText, StickyNote, Users2, Lock } from 'lucide-react'
 import { UnitRow } from './letters-view'
+import { useMe, canUseUnitForRegularLetter, canUseCommitteeForLetter } from './use-session'
 
-interface LetterTypesRes { letterTypes: { id: string; code: string; name: string; isActive: boolean }[] }
+interface LetterTypeRow {
+  id: string; code: string; name: string; description: string | null; isActive: boolean
+  _count?: { letters: number }
+}
+interface LetterTypesRes { letterTypes: LetterTypeRow[] }
 interface CommitteesRes { committees: { id: string; code: string; name: string; unitId: string; status: string }[] }
 
 export function CreateLetterDialog({ open, onClose, onCreated }: {
@@ -31,6 +37,11 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
   const [subject, setSubject] = useState('')
   const [notes, setNotes] = useState('')
 
+  // Scope user (master prompt D.3): FE hanya menawarkan opsi yang diizinkan;
+  // BE tetap memvalidasi ulang setiap payload (defense in depth).
+  const me = useMe()
+  const scope = me.data?.scope
+
   const units = useQuery({
     queryKey: ['units'],
     queryFn: () => apiGet<{ units: UnitRow[] }>('/api/units'),
@@ -47,32 +58,51 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
     enabled: open,
   })
 
-  const myCommittees = useMemo(
-    () => (committees.data?.committees ?? []).filter(c => c.unitId === unitId && c.status === 'ACTIVE'),
-    [committees.data, unitId],
+  // D.1: hanya unit aktif; D.2: scope tunggal → auto-select (derived, tanpa efek) & dikunci
+  const activeUnits = useMemo(
+    () => (units.data?.units ?? []).filter(u => u.status === 'ACTIVE'),
+    [units.data],
   )
+  const singleUnit = scope && !scope.all ? activeUnits.length === 1 : false
+  const autoUnit = !unitId && singleUnit && activeUnits.length === 1 ? activeUnits[0].id : ''
+  const effectiveUnitId = unitId || autoUnit
+
+  // E.2: surat kepanitiaan hanya utk committee yang memang diizinkan
+  // (assignment langsung / unit + includeCommittees). Unit tanpa izin → wajib panitia.
+  const canRegular = canUseUnitForRegularLetter(scope, effectiveUnitId)
+  const myCommittees = useMemo(
+    () => (committees.data?.committees ?? []).filter(c =>
+      c.unitId === effectiveUnitId && c.status === 'ACTIVE' && canUseCommitteeForLetter(scope, c)),
+    [committees.data, effectiveUnitId, scope],
+  )
+  const committeeRequired = !!effectiveUnitId && !canRegular
+  const effectiveCommitteeId = committeeRequired && committeeId === 'NONE' && myCommittees.length > 0
+    ? myCommittees[0].id
+    : committeeId
+
+  const selectedType = letterTypes.data?.letterTypes.find(t => t.id === letterTypeId)
 
   // Preview nomor (perkiraan)
   const previewParams = useMemo(() => {
-    const p = new URLSearchParams({ unitId })
-    if (committeeId !== 'NONE') p.set('committeeId', committeeId)
+    const p = new URLSearchParams({ unitId: effectiveUnitId })
+    if (effectiveCommitteeId !== 'NONE') p.set('committeeId', effectiveCommitteeId)
     if (direction) p.set('direction', direction)
     if (letterTypeId) p.set('letterTypeId', letterTypeId)
     if (letterDate) p.set('letterDate', letterDate)
     return p.toString()
-  }, [unitId, committeeId, direction, letterTypeId, letterDate])
+  }, [effectiveUnitId, effectiveCommitteeId, direction, letterTypeId, letterDate])
 
   const preview = useQuery({
     queryKey: ['preview', previewParams],
     queryFn: () => apiGet<PreviewRes>(`/api/letters/preview?${previewParams}`),
-    enabled: open && !!unitId,
+    enabled: open && !!effectiveUnitId,
   })
 
   const createDraft = useMutation({
     mutationFn: async () => {
       const body = {
-        issuingUnitId: unitId,
-        committeeId: committeeId === 'NONE' ? null : committeeId,
+        issuingUnitId: effectiveUnitId,
+        committeeId: effectiveCommitteeId === 'NONE' ? null : effectiveCommitteeId,
         direction,
         letterTypeId,
         letterDate,
@@ -90,7 +120,8 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
     onError: (e) => toast.error((e as Error).message),
   })
 
-  const canSubmit = unitId && direction && letterTypeId && letterDate
+  const canSubmit = effectiveUnitId && direction && letterTypeId && letterDate
+    && (effectiveCommitteeId !== 'NONE' || canRegular)
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -105,27 +136,40 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label className="text-[12px] font-semibold flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5 text-muted-foreground" /> Unit penerbit</Label>
-              <Select value={unitId || undefined} onValueChange={(v) => { setUnitId(v); setCommitteeId('NONE') }}>
+              <Label className="text-[12px] font-semibold flex items-center gap-1.5">
+                <Building2 className="w-3.5 h-3.5 text-muted-foreground" /> Unit penerbit
+                {singleUnit && <Lock className="w-3 h-3 text-muted-foreground" aria-label="Ditetapkan otomatis — scope tunggal" />}
+              </Label>
+              <Select value={effectiveUnitId || undefined} onValueChange={(v) => { setUnitId(v); setCommitteeId('NONE') }} disabled={singleUnit}>
                 <SelectTrigger className="bg-surface"><SelectValue placeholder="Pilih unit" /></SelectTrigger>
                 <SelectContent>
-                  {units.data?.units.filter(u => u.status === 'ACTIVE').map((u) => (
+                  {activeUnits.map((u) => (
                     <SelectItem key={u.id} value={u.id}>{u.code} — {u.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {singleUnit && (
+                <p className="text-[11px] text-muted-foreground">Anda hanya memiliki satu unit — dipilih otomatis.</p>
+              )}
             </div>
             <div className="space-y-1.5">
-              <Label className="text-[12px] font-semibold flex items-center gap-1.5"><Users2 className="w-3.5 h-3.5 text-muted-foreground" /> Kepanitiaan</Label>
-              <Select value={committeeId} onValueChange={setCommitteeId} disabled={!unitId || myCommittees.length === 0}>
+              <Label className="text-[12px] font-semibold flex items-center gap-1.5">
+                <Users2 className="w-3.5 h-3.5 text-muted-foreground" /> Kepanitiaan
+              </Label>
+              <Select value={effectiveCommitteeId} onValueChange={setCommitteeId} disabled={!effectiveUnitId || (myCommittees.length === 0 && committeeRequired)}>
                 <SelectTrigger className="bg-surface"><SelectValue placeholder="Tidak ada" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="NONE">Surat reguler unit</SelectItem>
+                  {!committeeRequired && <SelectItem value="NONE">Surat reguler unit</SelectItem>}
                   {myCommittees.map((c) => (
                     <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {committeeRequired && (
+                <p className="text-[11px] text-muted-foreground">
+                  Anda tidak berhak menerbitkan surat reguler unit ini — pilih kepanitiaan Anda.
+                </p>
+              )}
             </div>
           </div>
 
@@ -141,7 +185,10 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-[12px] font-semibold">Jenis surat</Label>
+              <Label className="text-[12px] font-semibold flex items-center gap-1">
+                Jenis surat
+                <LetterTypeInfo selected={selectedType} />
+              </Label>
               <Select value={letterTypeId || undefined} onValueChange={setLetterTypeId}>
                 <SelectTrigger className="bg-surface"><SelectValue placeholder="Pilih jenis" /></SelectTrigger>
                 <SelectContent>
@@ -216,6 +263,71 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/**
+ * ⓘ Kode Surat (master prompt C): popover dari data master LetterType — bukan hardcode.
+ * Dukung hover (desktop), tap (layar sentuh), dan keyboard (focus + Enter/Space).
+ */
+function LetterTypeInfo({ selected }: { selected?: LetterTypeRow }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label="Keterangan kode surat"
+          className="inline-flex w-4 h-4 items-center justify-center rounded-full border border-muted-foreground/40 text-[10px] font-bold text-muted-foreground hover:text-emerald hover:border-emerald transition-colors align-middle"
+          onClick={(e) => { e.preventDefault(); setOpen(v => !v) }}
+          onMouseEnter={() => setOpen(true)}
+          onMouseLeave={() => setOpen(false)}
+          onBlur={() => setOpen(false)}
+        >
+          i
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-80 p-0"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+      >
+        {selected ? (
+          <div className="p-3.5 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[13px] font-semibold">Kode Surat</p>
+              <span className="font-mono text-[12px] font-bold text-emerald-deep bg-emerald-soft rounded-md px-2 py-0.5">
+                {selected.code}
+              </span>
+            </div>
+            <div>
+              <p className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">Nama / klasifikasi</p>
+              <p className="text-[12.5px]">{selected.name}</p>
+            </div>
+            <div>
+              <p className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">Keterangan</p>
+              <p className="text-[12.5px] leading-relaxed">
+                {selected.description || 'Belum ada keterangan untuk jenis surat ini.'}
+              </p>
+            </div>
+            <div className="rounded-lg bg-muted/60 p-2.5 text-[11.5px] text-muted-foreground leading-relaxed">
+              Kode ini menjadi komponen nomor surat saat terbit
+              {typeof selected._count?.letters === 'number' && (
+                <> · sudah dipakai <span className="font-semibold text-foreground">{selected._count.letters}</span> surat</>
+              )}
+              . Hanya jenis <span className="font-semibold text-foreground">aktif</span> yang bisa dipilih untuk surat baru.
+            </div>
+          </div>
+        ) : (
+          <div className="p-3.5 text-[12.5px] text-muted-foreground leading-relaxed">
+            <span className="font-semibold text-foreground">Kode surat</span> adalah singkatan jenis surat
+            (mis. <span className="font-mono">UND</span> = undangan) yang menjadi bagian nomor surat resmi.
+            Pilih jenis surat terlebih dahulu untuk melihat keterangannya.
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   )
 }
 

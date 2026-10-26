@@ -6,6 +6,7 @@ import { requirePermission } from '@/lib/api-helpers'
 import { writeAudit } from '@/lib/audit'
 import { COMMITTEE_STATUSES } from '@/lib/constants'
 import { sanitizeSegment } from '@/lib/constants'
+import { committeeVisibilityFilter, canManageUnit, canManageCommittee } from '@/lib/rbac'
 
 const createSchema = z.object({
   unitId: z.string().min(1),
@@ -20,7 +21,9 @@ export async function GET() {
   return handle(async () => {
     const r = await requirePermission('letter.view')
     if ('error' in r) return r.error
+    // Scope-filtered: committee di bawah unit yang dikelola, atau yang di-assign langsung
     const committees = await db.committee.findMany({
+      where: committeeVisibilityFilter(r.user),
       include: { unit: { select: { id: true, code: true, name: true } } },
       orderBy: [{ unitId: 'asc' }, { code: 'asc' }],
     })
@@ -42,6 +45,10 @@ export async function POST(req: NextRequest) {
     const unit = await db.unit.findUnique({ where: { id: unitId } })
     if (!unit) return fail(404, 'NOT_FOUND', 'Unit parent tidak ditemukan')
     if (unit.status !== 'ACTIVE') return fail(409, 'UNIT_INACTIVE', 'Kepanitiaan hanya bisa dibuat di bawah unit aktif')
+    // Scope validation (audit #4): unit admin hanya boleh membuat kepanitiaan di unitnya
+    if (!canManageUnit(r.user, unitId)) {
+      return fail(403, 'FORBIDDEN', 'Anda tidak memiliki wewenang mengelola kepanitiaan di unit ini')
+    }
 
     const dup = await db.committee.findFirst({ where: { unitId, code } })
     if (dup) return fail(409, 'CONFLICT', 'Kode kepanitiaan sudah dipakai di unit ini')
@@ -96,6 +103,10 @@ export async function PATCH(req: NextRequest) {
 
     const committee = await db.committee.findUnique({ where: { id }, include: { _count: { select: { letters: true } } } })
     if (!committee) return fail(404, 'NOT_FOUND', 'Kepanitiaan tidak ditemukan')
+    // Scope validation (audit #4): hanya admin unit induk / admin committee itu
+    if (!canManageCommittee(r.user, committee)) {
+      return fail(403, 'FORBIDDEN', 'Anda tidak memiliki wewenang mengelola kepanitiaan ini')
+    }
 
     if (changes.shareParentCounter !== undefined && changes.shareParentCounter !== committee.shareParentCounter) {
       if (committee._count.letters > 0) {

@@ -149,26 +149,32 @@ function UserForm({ open, user, units, committees, onClose, onSaved }: {
   const isEdit = !!user
   const [username, setUsername] = useState(user?.username ?? '')
   const [fullName, setFullName] = useState(user?.fullName ?? '')
+  const [email, setEmail] = useState(user?.email ?? '')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [role, setRole] = useState(user?.role ?? 'OPERATOR')
   const [assignments, setAssignments] = useState<AssignmentDraft[]>(
     user?.assignments.map(a => ({ unitId: a.unitId, committeeId: a.committeeId, includeCommittees: a.includeCommittees })) ?? []
   )
 
+  const passwordMismatch = confirmPassword !== '' && password !== confirmPassword
+
   const save = useMutation({
     mutationFn: () => {
-      const base = { fullName, role, assignments: assignments.map(a => ({ ...a })) }
+      const base = { fullName, email: email || null, role, assignments: assignments.map(a => ({ ...a })) }
       if (isEdit) {
-        const payload = { id: user!.id, ...base, ...(password ? { password } : {}) }
+        const payload = { id: user!.id, ...base, ...(password ? { password, confirmPassword } : {}) }
         return apiPatch('/api/users', payload)
       }
-      return apiPost('/api/users', { username, ...base, password })
+      return apiPost('/api/users', { username, ...base, password, confirmPassword })
     },
     onSuccess: () => { toast.success(isEdit ? 'Pengguna diperbarui' : 'Pengguna dibuat'); onSaved() },
     onError: (e) => toast.error((e as Error).message),
   })
 
   const isGlobalRole = GLOBAL_ROLES.includes(role)
+  const passwordOk = isEdit ? (password === '' || password.length >= 10) : password.length >= 10
+  const canSave = !!fullName && !passwordMismatch && passwordOk && (isEdit || !!username)
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -189,10 +195,25 @@ function UserForm({ open, user, units, committees, onClose, onSaved }: {
           <div className="space-y-1.5">
             <Label className="text-[12px] font-semibold">Nama lengkap</Label>
             <Input value={fullName} className="bg-surface" onChange={(e) => setFullName(e.target.value)} />
+            <p className="text-[11px] text-muted-foreground">Nama tampilan — bisa sama dengan pengguna lain (identitas login tetap username).</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[12px] font-semibold">Email (opsional)</Label>
+            <Input type="email" value={email} className="bg-surface" placeholder="nama@yapsidarussalam.or.id" onChange={(e) => setEmail(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label className="text-[12px] font-semibold">{isEdit ? 'Password baru (kosongkan bila tidak diubah)' : 'Password (min 10 karakter)'}</Label>
             <Input type="password" value={password} className="bg-surface" onChange={(e) => setPassword(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[12px] font-semibold">{isEdit ? 'Konfirmasi password baru' : 'Konfirmasi password'}</Label>
+            <Input type="password" value={confirmPassword} className="bg-surface" onChange={(e) => setConfirmPassword(e.target.value)} />
+            {passwordMismatch && (
+              <p className="text-[11px] text-destructive font-medium">Konfirmasi password tidak cocok</p>
+            )}
+            {!passwordMismatch && password !== '' && password.length < 10 && (
+              <p className="text-[11px] text-muted-foreground">Minimal 10 karakter</p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label className="text-[12px] font-semibold">Role</Label>
@@ -259,7 +280,7 @@ function UserForm({ open, user, units, committees, onClose, onSaved }: {
         </div>
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button disabled={save.isPending || (!isEdit && (!username || password.length < 10)) || !fullName}
+          <Button disabled={save.isPending || !canSave}
             onClick={() => save.mutate()} className="shadow-card min-w-28">
             {save.isPending ? 'Menyimpan…' : 'Simpan'}
           </Button>

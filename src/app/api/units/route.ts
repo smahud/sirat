@@ -6,6 +6,7 @@ import { requirePermission } from '@/lib/api-helpers'
 import { writeAudit } from '@/lib/audit'
 import { UNIT_STATUSES } from '@/lib/constants'
 import { sanitizeSegment } from '@/lib/constants'
+import { unitVisibilityFilter } from '@/lib/rbac'
 
 const createSchema = z.object({
   code: z.string().trim().min(1).max(32),
@@ -16,7 +17,12 @@ export async function GET() {
   return handle(async () => {
     const r = await requirePermission('letter.view')
     if ('error' in r) return r.error
-    const units = await db.unit.findMany({ orderBy: { code: 'asc' } })
+    // Scope-filtered: user non-global hanya melihat unit assignment + unit parent
+    // dari committee assignment (info-leak metadata lintas scope ditutup)
+    const units = await db.unit.findMany({
+      where: unitVisibilityFilter(r.user),
+      orderBy: { code: 'asc' },
+    })
     return ok({ units })
   })
 }

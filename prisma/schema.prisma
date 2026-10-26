@@ -89,14 +89,15 @@ model AccessAssignment {
 }
 
 model LetterType {
-  id        String   @id @default(cuid())
-  code      String   @unique // snapshot dicetak saat terbit; perubahan kode hanya utk terbitan baru
-  name      String
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  code        String   @unique // snapshot dicetak saat terbit; perubahan kode hanya utk terbitan baru
+  name        String
+  description String?  // keterangan/kategori utk tooltip "Kode Surat" (master prompt C)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  letters   Letter[] @relation("LetterType")
+  letters     Letter[] @relation("LetterType")
 }
 
 model NumberingProfile {

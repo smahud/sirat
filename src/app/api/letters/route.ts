@@ -92,10 +92,16 @@ export async function POST(req: NextRequest) {
       if (!committee) return fail(404, 'NOT_FOUND', 'Kepanitiaan tidak ditemukan')
       if (committee.unitId !== unit.id) return fail(409, 'COMMITTEE_MISMATCH', 'Kepanitiaan tidak berada di bawah unit penerbit') // aturan bisnis 2
       if (committee.status !== 'ACTIVE') return fail(409, 'COMMITTEE_INACTIVE', 'Kepanitiaan tidak aktif')
-      if (!canAccessCommittee(r.user, committee)) return fail(403, 'FORBIDDEN', 'Anda tidak memiliki akses ke kepanitiaan ini')
-    }
-    if (!canAccessUnit(r.user, unit.id) && !(committee && canAccessCommittee(r.user, committee))) {
-      return fail(403, 'FORBIDDEN', 'Anda tidak memiliki akses ke unit ini')
+      // Surat kepanitiaan WAJIB akses committee (assignment langsung / includeCommittees
+      // eksplisit) — akses unit saja tidak cukup (master prompt E.2, konsisten dgn preview & issue).
+      if (!canAccessCommittee(r.user, committee)) {
+        return fail(403, 'FORBIDDEN', 'Anda tidak memiliki akses ke kepanitiaan ini')
+      }
+    } else {
+      // Surat reguler unit: wajib akses unit
+      if (!canAccessUnit(r.user, unit.id)) {
+        return fail(403, 'FORBIDDEN', 'Anda tidak memiliki akses ke unit ini')
+      }
     }
 
     const letterType = await db.letterType.findUnique({ where: { id: body.letterTypeId } })

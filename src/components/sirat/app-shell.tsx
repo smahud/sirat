@@ -8,6 +8,7 @@ import { LettersView } from './letters-view'
 import { UnitsView } from './units-view'
 import { ProfilesView } from './profiles-view'
 import { UsersView } from './users-view'
+import { LetterTypesView } from './letter-types-view'
 import { AuditView, HealthView } from './audit-health-views'
 import { ImportView } from './import-view'
 import { SettingsView } from './settings-view'
@@ -15,10 +16,10 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
   FileText, LayoutDashboard, Building2, SlidersHorizontal, Users, ScrollText,
-  HeartPulse, FileSpreadsheet, Settings, LogOut, Loader2, X,
+  HeartPulse, FileSpreadsheet, Settings, LogOut, Loader2, X, FileStack,
 } from 'lucide-react'
 
-type ViewKey = 'dashboard' | 'letters' | 'units' | 'profiles' | 'users' | 'audit' | 'health' | 'import' | 'settings'
+type ViewKey = 'dashboard' | 'letters' | 'units' | 'profiles' | 'lettertypes' | 'users' | 'audit' | 'health' | 'import' | 'settings'
 
 interface NavItem {
   key: ViewKey
@@ -44,6 +45,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { key: 'units', label: 'Unit & Panitia', icon: Building2, perm: 'letter.view' },
       { key: 'profiles', label: 'Profil Nomor', icon: SlidersHorizontal, perm: 'letter.view' },
+      { key: 'lettertypes', label: 'Jenis Surat', icon: FileStack, perm: 'lettertype.manage' },
       { key: 'users', label: 'Pengguna', icon: Users, perm: 'user.manage' },
     ],
   },
@@ -59,7 +61,7 @@ const NAV_SECTIONS: NavSection[] = [
 ]
 
 export function AppShell() {
-  const { me, loading, login, logout } = useSession()
+  const { me, loading, login, logout, refresh } = useSession()
   const [view, setView] = useState<ViewKey>('dashboard')
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
@@ -208,7 +210,7 @@ export function AppShell() {
 
         <main className="flex-1 px-4 py-6 md:px-8 md:py-8 max-w-full overflow-x-hidden">
           <div className="mx-auto max-w-6xl animate-rise" key={view}>
-            <MainContent view={view} me={me} />
+            <MainContent view={view} me={me} onProfileUpdated={refresh} />
           </div>
         </main>
 
@@ -239,16 +241,17 @@ function roleLabel(role: string): string {
   return map[role] ?? role
 }
 
-function MainContent({ view, me }: { view: ViewKey; me: Me }) {
+function MainContent({ view, me, onProfileUpdated }: { view: ViewKey; me: Me; onProfileUpdated: () => void }) {
   switch (view) {
     case 'letters': return <LettersView />
     case 'units': return <UnitsView canManage={hasPerm(me.permissions, 'committee.manage')} />
     case 'profiles': return <ProfilesView />
+    case 'lettertypes': return <LetterTypesView />
     case 'users': return <UsersView />
     case 'audit': return <AuditView />
     case 'health': return <HealthView />
     case 'import': return <ImportView />
-    case 'settings': return <SettingsView me={me.user} />
+    case 'settings': return <SettingsView me={me.user} onProfileUpdated={onProfileUpdated} />
     default: return <DashboardView />
   }
 }
