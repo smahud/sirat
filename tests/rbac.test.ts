@@ -155,3 +155,28 @@ describe('csvCell — sanitasi formula injection', () => {
     expect(csvCell(undefined)).toBe('')
   })
 })
+
+describe('B.1 — permission backup terpisah & tidak otomatis (master prompt lanjutan)', () => {
+  it('UNIT_ADMIN/COMMITTEE_ADMIN tidak otomatis punya backup.export maupun backup.restore', () => {
+    const perms = ROLE_PERMISSIONS.UNIT_ADMIN
+    expect(perms).not.toContain('backup.export')
+    expect(perms).not.toContain('backup.restore')
+    expect(ROLE_PERMISSIONS.COMMITTEE_ADMIN).not.toContain('backup.export')
+    expect(ROLE_PERMISSIONS.COMMITTEE_ADMIN).not.toContain('backup.restore')
+  })
+  it('ORG_ADMIN boleh full backup tetapi TIDAK boleh restore', () => {
+    const u = userWith({ all: true }, 'ORG_ADMIN')
+    expect(hasPermission(u, 'backup.export')).toBe(true)
+    expect(hasPermission(u, 'backup.restore')).toBe(false)
+  })
+  it('OPERATOR/VIEWER/AUDITOR tidak punya keduanya', () => {
+    for (const role of ['OPERATOR', 'VIEWER', 'AUDITOR'] as const) {
+      expect(ROLE_PERMISSIONS[role]).not.toContain('backup.export')
+      expect(ROLE_PERMISSIONS[role]).not.toContain('backup.restore')
+    }
+  })
+  it('hanya SYSTEM_ADMIN yang bisa full restore', () => {
+    const u = userWith({ all: true }, 'SYSTEM_ADMIN')
+    expect(hasPermission(u, 'backup.restore')).toBe(true)
+  })
+})

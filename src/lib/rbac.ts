@@ -15,6 +15,7 @@ export const PERMISSIONS = [
   'letter.issue', 'letter.cancel', 'archive.upload', 'archive.download',
   'archive.trash', 'archive.restore', 'audit.view', 'storage.manage',
   'import.manage', 'export.run', 'health.view',
+  'backup.export', 'backup.restore',
 ] as const
 export type Permission = (typeof PERMISSIONS)[number]
 
@@ -37,6 +38,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[] | '*'> = {
     'appidentity.manage', 'unit.manage', 'committee.manage', 'user.manage',
     'lettertype.manage', 'profile.manage', 'letter.view', 'audit.view',
     'storage.manage', 'import.manage', 'export.run', 'health.view',
+    'backup.export',
   ],
   UNIT_ADMIN: UNIT_ADMIN_PERMS,
   COMMITTEE_ADMIN: UNIT_ADMIN_PERMS,
@@ -44,6 +46,13 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[] | '*'> = {
   VIEWER: ['letter.view', 'archive.download'],
   AUDITOR: ['letter.view', 'audit.view'],
 }
+
+// Master prompt lanjutan B.1: backup & restore adalah DUA permission terpisah
+// dan TIDAK otomatis diberikan ke Admin Unit/Committee — harus eksplisit lewat
+// BackupGrant per scope (unit/kepanitiaan) atau role global.
+// - backup.export (global): SYSTEM_ADMIN ('*') + ORG_ADMIN → Full System Backup.
+// - backup.restore (global): SYSTEM_ADMIN saja → Full System Restore.
+// - Scoped backup/restore: lewat tabel BackupGrant (lihat resolveBackupCapabilities).
 
 export const GLOBAL_ROLES: Role[] = ['SYSTEM_ADMIN', 'ORG_ADMIN', 'AUDITOR']
 
@@ -181,4 +190,77 @@ export function profileVisibilityFilter(user: ResolvedUser) {
       { committeeId: { in: user.scope.committeeIds } },
     ],
   }
+}
+
+// ==== Hak akses backup (master prompt lanjutan B) ====
+
+export interface BackupScopeCap {
+  type: 'UNIT' | 'COMMITTEE'
+  id: string
+  code: string
+  name: string
+  parentCode?: string
+  canExport: boolean
+  canRestore: boolean
+}
+
+export interface BackupCapabilities {
+  fullExport: boolean   // Full System Backup (otoritas global)
+  fullRestore: boolean  // Full System Restore (hanya Super Admin)
+  scopes: BackupScopeCap[]
+}
+
+/**
+ * Kapabilitas backup efektif user (B.1–B.6):
+ * - Full export  = permission global backup.export (SYSTEM_ADMIN/ORG_ADMIN).
+ * - Full restore = permission global backup.restore (hanya SYSTEM_ADMIN).
+ * - Scoped       = gabungan BackupGrant per unit/kepanitiaan.
+ * Grant adalah izin administratif EKSPLISIT — unit/kepanitiaan tanpa grant
+ * tidak muncul sama sekali (deny by default).
+ */
+export async function resolveBackupCapabilities(user: ResolvedUser): Promise<BackupCapabilities> {
+  const fullExport = hasPermission(user, 'backup.export')
+  const fullRestore = hasPermission(user, 'backup.restore')
+  const grants = await db.backupGrant.findMany({
+    where: { userId: user.id },
+    include: {
+      unit: { select: { id: true, code: true, name: true } },
+      committee: { select: { id: true, code: true, name: true, unit: { select: { code: true } } } },
+    },
+  })
+  const scopes: BackupScopeCap[] = []
+  for (const g of grants) {
+    if (g.unit) {
+      scopes.push({
+        type: 'UNIT', id: g.unit.id, code: g.unit.code, name: g.unit.name,
+        canExport: g.canExport, canRestore: g.canRestore,
+      })
+    } else if (g.committee) {
+      scopes.push({
+        type: 'COMMITTEE', id: g.committee.id, code: g.committee.code, name: g.committee.name,
+        parentCode: g.committee.unit.code,
+        canExport: g.canExport, canRestore: g.canRestore,
+      })
+    }
+  }
+  return { fullExport, fullRestore, scopes }
+}
+
+/**
+ * Validasi target backup/restore terhadap kapabilitas user (B.8: jangan percaya
+ * payload FE). Unit scope mencakup seluruh kepanitiaan di bawahnya (izin
+ * administratif eksplisit, didokumentasikan — bukan pewarisan diam-diam).
+ */
+export function assertBackupTargets(
+  caps: BackupCapabilities,
+  targets: { type: 'UNIT' | 'COMMITTEE'; id: string }[],
+  action: 'export' | 'restore',
+): string | null {
+  for (const t of targets) {
+    const cap = caps.scopes.find(s => s.type === t.type && s.id === t.id)
+    if (!cap) return `Scope ${t.type} tidak ada dalam hak akses backup Anda`
+    if (action === 'export' && !cap.canExport) return `Anda tidak memiliki izin backup.export untuk ${cap.code}`
+    if (action === 'restore' && !cap.canRestore) return `Anda tidak memiliki izin backup.restore untuk ${cap.code}`
+  }
+  return null
 }

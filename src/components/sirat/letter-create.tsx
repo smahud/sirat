@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiGet, apiPost } from '@/lib/client'
 import { Button } from '@/components/ui/button'
@@ -11,16 +11,35 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
-import { Info, Hash, Building2, CalendarDays, User, MessageSquareText, StickyNote, Users2, Lock } from 'lucide-react'
+import { Info, Hash, Building2, CalendarDays, User, MessageSquareText, StickyNote, Users2, Lock, Link2, X, FileSearch } from 'lucide-react'
 import { UnitRow } from './letters-view'
 import { useMe, canUseUnitForRegularLetter, canUseCommitteeForLetter } from './use-session'
 
 interface LetterTypeRow {
-  id: string; code: string; name: string; description: string | null; isActive: boolean
+  id: string; code: string; name: string
+  description: string | null; purpose: string | null; usageExamples: string | null; notes: string | null
+  isActive: boolean
   _count?: { letters: number }
 }
 interface LetterTypesRes { letterTypes: LetterTypeRow[] }
 interface CommitteesRes { committees: { id: string; code: string; name: string; unitId: string; status: string }[] }
+
+interface RefSearchResult {
+  id: string
+  officialNumber: string | null
+  legacyNumber: string | null
+  subject: string | null
+  letterDate: string | null
+  status: string
+  unitCode: string
+}
+
+interface RefDraft {
+  letterId: string | null
+  refNumberText: string
+  subject?: string | null
+  note?: string
+}
 
 export function CreateLetterDialog({ open, onClose, onCreated }: {
   open: boolean
@@ -36,6 +55,14 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
   const [recipient, setRecipient] = useState('')
   const [subject, setSubject] = useState('')
   const [notes, setNotes] = useState('')
+
+  // Referensi surat sebelumnya (master prompt lanjutan G.1)
+  const [refDrafts, setRefDrafts] = useState<RefDraft[]>([])
+  const [refInput, setRefInput] = useState('')
+  const [refDropdown, setRefDropdown] = useState(false)
+  const refDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [refResults, setRefResults] = useState<RefSearchResult[]>([])
+  const [refSearching, setRefSearching] = useState(false)
 
   // Scope user (master prompt D.3): FE hanya menawarkan opsi yang diizinkan;
   // BE tetap memvalidasi ulang setiap payload (defense in depth).
@@ -98,6 +125,47 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
     enabled: open && !!effectiveUnitId,
   })
 
+  // Autocomplete referensi (G.2): debounce 300ms, min 2 karakter, hasil dibatasi & scope user
+  useEffect(() => {
+    if (refDebounce.current) clearTimeout(refDebounce.current)
+    const q = refInput.trim()
+    if (q.length < 2) {
+      setRefResults([])
+      setRefSearching(false)
+      return
+    }
+    setRefSearching(true)
+    refDebounce.current = setTimeout(async () => {
+      try {
+        const data = await apiGet<{ results: RefSearchResult[] }>(`/api/letters/search?q=${encodeURIComponent(q)}&limit=8`)
+        setRefResults(data.results)
+      } catch {
+        setRefResults([])
+      } finally {
+        setRefSearching(false)
+      }
+    }, 300)
+    return () => { if (refDebounce.current) clearTimeout(refDebounce.current) }
+  }, [refInput])
+
+  const addInternalRef = (r: RefSearchResult) => {
+    const text = r.officialNumber ?? r.legacyNumber ?? r.id
+    if (refDrafts.some(d => d.letterId === r.id || d.refNumberText.toUpperCase() === text.toUpperCase())) return
+    setRefDrafts(prev => [...prev, { letterId: r.id, refNumberText: text, subject: r.subject }])
+    setRefInput('')
+    setRefResults([])
+    setRefDropdown(false)
+  }
+
+  const addManualRef = () => {
+    const text = refInput.trim()
+    if (!text) return
+    if (refDrafts.some(d => d.refNumberText.toUpperCase() === text.toUpperCase())) { setRefInput(''); return }
+    setRefDrafts(prev => [...prev, { letterId: null, refNumberText: text }])
+    setRefInput('')
+    setRefResults([])
+  }
+
   const createDraft = useMutation({
     mutationFn: async () => {
       const body = {
@@ -109,12 +177,15 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
         recipient: recipient || null,
         subject: subject || null,
         notes: notes || null,
+        references: refDrafts.map(d => ({ letterId: d.letterId, refNumberText: d.refNumberText })),
       }
       return apiPost<{ letter: { id: string } }>('/api/letters', body)
     },
     onSuccess: (data) => {
       toast.success('Draft surat dibuat')
       qc.invalidateQueries({ queryKey: ['preview'] })
+      setRefDrafts([])
+      setRefInput('')
       onCreated(data.letter.id)
     },
     onError: (e) => toast.error((e as Error).message),
@@ -221,6 +292,89 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
             <Textarea id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="bg-surface resize-none" />
           </div>
 
+          {/* Referensi surat sebelumnya (G.1): manual + autocomplete */}
+          <div className="space-y-1.5">
+            <Label htmlFor="refInput" className="text-[12px] font-semibold flex items-center gap-1.5">
+              <Link2 className="w-3.5 h-3.5 text-muted-foreground" /> Referensi Surat Sebelumnya
+              <span className="text-[10.5px] font-normal text-muted-foreground">(opsional)</span>
+            </Label>
+            <div className="relative">
+              <FileSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60 pointer-events-none" />
+              <Input
+                id="refInput"
+                value={refInput}
+                className="bg-surface pl-9"
+                placeholder="Ketik nomor (mis. 001/SK/…) atau masukkan nomor manual…"
+                onChange={(e) => { setRefInput(e.target.value); setRefDropdown(true) }}
+                onFocus={() => setRefDropdown(true)}
+                onBlur={() => setTimeout(() => setRefDropdown(false), 180)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    if (refResults.length > 0 && refInput.trim().length >= 2) addInternalRef(refResults[0])
+                    else addManualRef()
+                  }
+                }}
+              />
+              {refDropdown && refInput.trim().length >= 2 && (
+                <div className="absolute z-50 left-0 right-0 top-full mt-1 rounded-xl border bg-surface shadow-lift overflow-hidden">
+                  {refSearching && <p className="px-3 py-2.5 text-[12px] text-muted-foreground">Mencari surat…</p>}
+                  {!refSearching && refResults.length === 0 && (
+                    <div className="px-3 py-2.5">
+                      <p className="text-[12px] text-muted-foreground">Tidak ada surat yang cocok.</p>
+                      <button type="button" className="mt-1 text-[12px] font-semibold text-emerald hover:underline" onClick={addManualRef}>
+                        Simpan “{refInput.trim()}” sebagai referensi manual →
+                      </button>
+                    </div>
+                  )}
+                  {!refSearching && refResults.map(r => {
+                    const num = r.officialNumber ?? r.legacyNumber ?? '(tanpa nomor)'
+                    const already = refDrafts.some(d => d.letterId === r.id || d.refNumberText.toUpperCase() === num.toUpperCase())
+                    return (
+                      <button
+                        key={r.id}
+                        type="button"
+                        disabled={already}
+                        className="w-full text-left px-3 py-2 hover:bg-emerald-soft/50 disabled:opacity-40 transition-colors"
+                        onMouseDown={(e) => { e.preventDefault(); addInternalRef(r) }}
+                      >
+                        <p className="font-mono text-[12px] font-semibold text-emerald-deep">{num}</p>
+                        <p className="text-[11px] text-muted-foreground truncate">
+                          {r.unitCode} · {r.status === 'CANCELLED' ? 'Batal' : 'Terbit'} · {r.subject ?? '(tanpa perihal)'}
+                        </p>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+            {refDrafts.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {refDrafts.map((d, i) => (
+                  <span key={i} className="inline-flex items-center gap-1.5 rounded-full border border-emerald/25 bg-emerald-soft pl-2.5 pr-1.5 py-1 text-[11.5px]">
+                    <Link2 className="w-3 h-3 text-emerald" />
+                    <span className="font-mono font-semibold text-emerald-deep">{d.refNumberText}</span>
+                    {d.letterId
+                      ? <span className="text-emerald-deep/70">terhubung</span>
+                      : <span className="text-muted-foreground">manual</span>}
+                    <button
+                      type="button"
+                      className="w-4 h-4 rounded-full flex items-center justify-center hover:bg-emerald/20"
+                      aria-label="Hapus referensi"
+                      onClick={() => setRefDrafts(prev => prev.filter((_, j) => j !== i))}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Pilih hasil pencarian untuk menghubungkan surat (relasi internal), atau simpan nomor apa pun sebagai referensi manual.
+              Referensi hanya bisa diubah selama status masih draft.
+            </p>
+          </div>
+
           {/* Panel preview nomor */}
           {preview.data?.available && (
             <div className="rounded-xl border border-emerald/25 bg-gradient-to-br from-emerald-soft to-surface p-4">
@@ -294,7 +448,7 @@ function LetterTypeInfo({ selected }: { selected?: LetterTypeRow }) {
         onMouseLeave={() => setOpen(false)}
       >
         {selected ? (
-          <div className="p-3.5 space-y-2">
+          <div className="p-3.5 space-y-2 max-h-72 overflow-y-auto scrollbar-slim">
             <div className="flex items-center justify-between gap-2">
               <p className="text-[13px] font-semibold">Kode Surat</p>
               <span className="font-mono text-[12px] font-bold text-emerald-deep bg-emerald-soft rounded-md px-2 py-0.5">
@@ -305,12 +459,36 @@ function LetterTypeInfo({ selected }: { selected?: LetterTypeRow }) {
               <p className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">Nama / klasifikasi</p>
               <p className="text-[12.5px]">{selected.name}</p>
             </div>
-            <div>
-              <p className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">Keterangan</p>
-              <p className="text-[12.5px] leading-relaxed">
-                {selected.description || 'Belum ada keterangan untuk jenis surat ini.'}
-              </p>
-            </div>
+            {selected.description && (
+              <div>
+                <p className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">Keterangan</p>
+                <p className="text-[12.5px] leading-relaxed">{selected.description}</p>
+              </div>
+            )}
+            {selected.purpose && (
+              <div>
+                <p className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">Fungsi / tujuan</p>
+                <p className="text-[12.5px] leading-relaxed">{selected.purpose}</p>
+              </div>
+            )}
+            {selected.usageExamples && (
+              <div>
+                <p className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">Contoh penggunaan</p>
+                <ul className="mt-1 space-y-0.5">
+                  {selected.usageExamples.split('\n').filter(Boolean).map((line, i) => (
+                    <li key={i} className="text-[12px] flex gap-1.5"><span className="text-emerald font-bold">•</span>{line.trim()}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {selected.notes && (
+              <div className="rounded-lg bg-gold-soft/70 p-2 text-[11.5px] text-gold-dark leading-relaxed">
+                {selected.notes}
+              </div>
+            )}
+            {!selected.description && !selected.purpose && !selected.usageExamples && (
+              <p className="text-[12.5px] text-muted-foreground leading-relaxed">Belum ada keterangan untuk jenis surat ini.</p>
+            )}
             <div className="rounded-lg bg-muted/60 p-2.5 text-[11.5px] text-muted-foreground leading-relaxed">
               Kode ini menjadi komponen nomor surat saat terbit
               {typeof selected._count?.letters === 'number' && (

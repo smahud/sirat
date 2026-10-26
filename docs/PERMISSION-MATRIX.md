@@ -26,8 +26,25 @@ RBAC scoped (Blueprint §9 + §16.5, NFR-002). Permission dihitung dari
 | import.manage         | ✅ | ✅ | ✅* | ✅* | — | — | — |
 | export.run            | ✅ | ✅ | ✅ | ✅ | — | — | — |
 | health.view           | ✅ | ✅ | ✅ | ✅ | — | — | — |
+| backup.export (full)  | ✅ | ✅ | — | — | — | — | — |
+| backup.restore (full) | ✅ | — | — | — | — | — | — |
 
 \* = terbatas scope unit/committee yang di-assign. SYSTEM_ADMIN punya `*`
+
+## Backup per scope (master prompt lanjutan B.1)
+
+`backup.export` / `backup.restore` **tidak otomatis** untuk Admin Unit/Committee —
+dua permission terpisah yang diberikan eksplisit per scope melalui tabel `BackupGrant`
+(menu Backup & Restore → Hak Akses Backup, hanya otoritas global):
+
+| Sumber izin | backup.export | backup.restore |
+|---|---|---|
+| Role SYSTEM_ADMIN (`*`) | semua scope (Full) | semua scope (Full) |
+| Role ORG_ADMIN | semua scope (Full) | — |
+| BackupGrant unit/kepanitiaan `canExport` | scope grant itu | — |
+| BackupGrant unit/kepanitiaan `canRestore` | — | scope grant itu |
+
+Pencabutan grant langsung efektif (kapabilitas di-resolve per request dari DB).
 (wildcard semua permission).
 
 > **Perubahan audit trail (v1.2):** `audit.view` dicabut dari UNIT_ADMIN dan

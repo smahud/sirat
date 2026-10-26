@@ -439,3 +439,34 @@ journalctl -u sirat -f --since today
 - Malware scanning.
 - Email notifikasi.
 - Multi-instance horizontal scale.
+
+
+## Backup & Restore (v1.3)
+
+Lihat **docs/BACKUP-RESTORE.md** untuk konsep lengkap. Ringkasan operasional:
+
+- Menu **Backup & Restore** di aplikasi: kapabilitas mengikuti role + BackupGrant.
+- Safety backup otomatis dibuat sebelum setiap restore: `data/backups/safety/` (maks 5).
+- Dekripsi manual safety backup: `node scripts/decrypt-backup.mjs <file.zip.enc> <out.zip>`
+  (membaca SESSION_SECRET dari .env — **cadangkan .env** bersama arsip).
+- Riwayat operasi: tabel `BackupEvent` + audit trail (`backup.*`).
+- Direktori: `data/backups/{exports,safety,tmp}`, staging restore di `data/staging/restore-uploads`.
+
+## Migrasi skema (v1.3+)
+
+Skema kini **versioned** via Prisma Migrate (sebelumnya `db push`):
+
+```bash
+# Status migrasi
+npx prisma migrate status
+
+# Terapkan migrasi tertunda (deploy normal)
+npx prisma migrate deploy
+
+# ROLLBACK: tidak ada migrate down otomatis — pulihkan lewat backup
+# (safety backup / full backup user) sesuai prosedur restore.
+```
+
+Baseline `0_init` menandai skema pra-v1.3 (sudah di-resolve applied pada deployment
+v1.3); `20261026_v1_3_master_continuation` menambahkan kolom keterangan, tabel
+LetterReference/BackupGrant/BackupEvent.

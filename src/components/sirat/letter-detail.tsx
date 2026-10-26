@@ -13,8 +13,43 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import {
   Download, FileUp, Trash2, Undo2, Ban, Stamp, Paperclip, FileCheck2,
-  Hash, Building2, Users2, CalendarDays, User, AlertTriangle,
+  Hash, Building2, Users2, CalendarDays, User, AlertTriangle, Link2, GitBranch, Inbox,
 } from 'lucide-react'
+
+interface RefRow {
+  id: string
+  refLetterId: string | null
+  refNumberText: string
+  isAutoLinked: boolean
+  createdAt: string
+  refLetter: {
+    id: string
+    officialNumber: string | null
+    legacyNumber: string | null
+    subject: string | null
+    status: string
+    letterDate: string | null
+    issuingUnit: { code: string }
+  } | null
+}
+
+interface RelatedRes {
+  outgoing: { from: string; to: string | null; text: string; isAutoLinked: boolean; node?: RelatedNode }[]
+  incoming: { from: string; to: string | null; text: string; isAutoLinked: boolean; node?: RelatedNode }[]
+  chain: RelatedNode[]
+  truncated: boolean
+}
+
+interface RelatedNode {
+  id: string
+  officialNumber: string | null
+  legacyNumber: string | null
+  subject: string | null
+  letterDate: string | null
+  status: string
+  unitCode: string
+  committeeCode: string | null
+}
 
 interface LetterDetailData {
   letter: {
@@ -37,6 +72,8 @@ interface LetterDetailData {
     issuer?: { id: string; fullName: string } | null
     profileVersion?: { profile: { name: string }; version: number } | null
     files: ArchiveFileRow[]
+    referencesFrom: RefRow[]
+    incomingRefCount: number
   }
 }
 
@@ -70,6 +107,13 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
     queryKey: ['letter', letterId],
     queryFn: () => apiGet<LetterDetailData>(`/api/letters/${letterId}`),
     enabled: !!letterId,
+  })
+
+  // Surat Terkait (H): dua arah + rantai, otorisasi per node di backend
+  const related = useQuery({
+    queryKey: ['letter-related', letterId],
+    queryFn: () => apiGet<RelatedRes>(`/api/letters/${letterId}/related`),
+    enabled: !!letterId && !!detail.data,
   })
 
   const invalidate = () => {
@@ -212,6 +256,14 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
                 “{l.notes}”
               </div>
             )}
+
+            {/* Referensi surat (G) + Surat Terkait (H) */}
+            <RelatedLettersCard
+              refs={l.referencesFrom ?? []}
+              incomingCount={l.incomingRefCount ?? 0}
+              related={related.data}
+              relatedLoading={related.isLoading}
+            />
 
             {/* Aksi */}
             {l.status === 'DRAFT' && (
@@ -410,5 +462,109 @@ function DetailItem({ icon: Icon, label, value, full }: {
       </p>
       <p className="text-[13.5px] font-medium break-words">{value}</p>
     </div>
+  )
+}
+
+/**
+ * Kartu Referensi + Surat Terkait (master prompt lanjutan G/H):
+ * - Referensi keluar: surat yang dirujuk surat ini (internal terhubung / manual).
+ * - Surat yang merujuk ke sini + rantai terkait — masing-masing node sudah
+ *   lolos pemeriksaan scope di backend (tidak ada kebocoran lintas scope).
+ */
+function RelatedLettersCard({ refs, incomingCount, related, relatedLoading }: {
+  refs: RefRow[]
+  incomingCount: number
+  related?: RelatedRes
+  relatedLoading: boolean
+}) {
+  const hasOutgoing = refs.length > 0
+  const hasIncoming = (related?.incoming.length ?? 0) > 0 || incomingCount > 0
+  const hasChain = (related?.chain.length ?? 0) > 0
+  if (!hasOutgoing && !hasIncoming && !relatedLoading) return null
+
+  return (
+    <Card className="shadow-card">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-[14px] font-semibold flex items-center gap-2">
+          <GitBranch className="w-4 h-4 text-emerald" /> Referensi &amp; Surat Terkait
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Referensi keluar */}
+        {hasOutgoing && (
+          <div className="space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+              <Link2 className="w-3.5 h-3.5" /> Mengacu pada ({refs.length})
+            </p>
+            {refs.map(r => (
+              <div key={r.id} className="rounded-lg border bg-surface px-3 py-2.5">
+                <p className="font-mono text-[12.5px] font-semibold text-emerald-deep break-all">{r.refNumberText}</p>
+                {r.refLetter ? (
+                  <p className="text-[11.5px] text-muted-foreground mt-0.5">
+                    {r.refLetter.issuingUnit.code} · {r.refLetter.status === 'CANCELLED' ? 'Batal' : r.refLetter.status === 'ISSUED' ? 'Terbit' : 'Draft'} · {r.refLetter.subject ?? '(tanpa perihal)'}
+                    {' '}· terhubung internal
+                  </p>
+                ) : (
+                  <p className="text-[11.5px] text-muted-foreground mt-0.5">referensi manual (surat eksternal / tidak terhubung)</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Referensi masuk */}
+        {relatedLoading && (
+          <p className="text-[12px] text-muted-foreground">Memuat surat terkait…</p>
+        )}
+        {!relatedLoading && hasIncoming && (
+          <div className="space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+              <Inbox className="w-3.5 h-3.5" /> Dirujuk oleh
+            </p>
+            {related?.incoming.length === 0 && incomingCount > 0 && (
+              <p className="text-[12px] text-muted-foreground">
+                {incomingCount} surat lain merujuk ke sini, namun berada di luar hak akses Anda.
+              </p>
+            )}
+            {related?.incoming.map((e, i) => e.node && (
+              <div key={i} className="rounded-lg border bg-surface px-3 py-2.5">
+                <p className="font-mono text-[12.5px] font-semibold text-emerald-deep break-all">
+                  {e.node.officialNumber ?? e.node.legacyNumber ?? '(tanpa nomor)'}
+                </p>
+                <p className="text-[11.5px] text-muted-foreground mt-0.5">
+                  {e.node.unitCode} · {e.node.status === 'CANCELLED' ? 'Batal' : 'Terbit'} · {e.node.subject ?? '(tanpa perihal)'}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Rantai terkait */}
+        {hasChain && (
+          <div className="space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+              <GitBranch className="w-3.5 h-3.5" /> Rangkaian terkait ({related!.chain.length})
+            </p>
+            <div className="space-y-1.5">
+              {related!.chain.map(n => (
+                <div key={n.id} className="rounded-lg border border-dashed bg-muted/30 px-3 py-2">
+                  <p className="font-mono text-[12px] font-semibold break-all">{n.officialNumber ?? n.legacyNumber ?? '(tanpa nomor)'}</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    {n.unitCode}{n.committeeCode ? ` · ${n.committeeCode}` : ''} · {n.status === 'CANCELLED' ? 'Batal' : 'Terbit'} · {n.subject ?? '(tanpa perihal)'}
+                  </p>
+                </div>
+              ))}
+            </div>
+            {related!.truncated && (
+              <p className="text-[11px] text-muted-foreground">Rantai dipotong pada 30 surat terkait pertama.</p>
+            )}
+          </div>
+        )}
+
+        {!hasOutgoing && !hasIncoming && (
+          <p className="text-[12px] text-muted-foreground">Belum ada referensi pada surat ini.</p>
+        )}
+      </CardContent>
+    </Card>
   )
 }

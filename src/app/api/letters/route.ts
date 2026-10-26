@@ -6,6 +6,7 @@ import { requirePermission, requireUser } from '@/lib/api-helpers'
 import { writeAudit } from '@/lib/audit'
 import { letterScopeFilter, canAccessUnit, canAccessCommittee } from '@/lib/rbac'
 import { DIRECTIONS, LETTER_STATUSES } from '@/lib/constants'
+import { syncLetterReferences, ReferenceInput } from '@/lib/references'
 
 const PAGE_SIZE = 20
 
@@ -61,6 +62,11 @@ export async function GET(req: NextRequest) {
   })
 }
 
+const referenceSchema = z.object({
+  letterId: z.string().optional().nullable(),
+  refNumberText: z.string().trim().min(1).max(240),
+})
+
 const createSchema = z.object({
   issuingUnitId: z.string().min(1),
   committeeId: z.string().min(1).optional().nullable(),
@@ -70,6 +76,7 @@ const createSchema = z.object({
   recipient: z.string().trim().max(240).optional().nullable(),
   subject: z.string().trim().max(240).optional().nullable(),
   notes: z.string().trim().max(2000).optional().nullable(),
+  references: z.array(referenceSchema).max(20).default([]), // master prompt lanjutan G.1
 })
 
 export async function POST(req: NextRequest) {
@@ -122,10 +129,14 @@ export async function POST(req: NextRequest) {
           status: 'DRAFT',
         },
       })
+      // Referensi surat sebelumnya (G.1): teks manual + relasi internal terverifikasi scope
+      if (body.references.length > 0) {
+        await syncLetterReferences(tx, r.user, letter.id, body.references as ReferenceInput[])
+      }
       await writeAudit(tx, {
         actorId: r.user.id, action: 'letter.draft.create', entityType: 'letter', entityId: letter.id,
         correlationId: r.correlationId,
-        metadata: { unit: unit.code, committee: committee?.code, direction: body.direction, letterDate: body.letterDate },
+        metadata: { unit: unit.code, committee: committee?.code, direction: body.direction, letterDate: body.letterDate, references: body.references.length },
       })
       return letter
     })

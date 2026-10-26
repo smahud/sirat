@@ -11,10 +11,29 @@ export interface MeScope {
   unitIdsWithAllCommittees: string[]
 }
 
+export interface MeBackupScope {
+  type: 'UNIT' | 'COMMITTEE'
+  id: string
+  code: string
+  name: string
+  parentCode?: string
+  canExport: boolean
+  canRestore: boolean
+}
+
+export interface MeBackup {
+  fullExport: boolean
+  fullRestore: boolean
+  scopes: MeBackupScope[]
+  canExportAny: boolean
+  canRestoreAny: boolean
+}
+
 export interface Me {
   user: { id: string; username: string; fullName: string; email: string | null; role: string }
   permissions: string[] | '*'
   scope: MeScope
+  backup?: MeBackup
 }
 
 /** Hook session: me-fetch sekali, login/logout, refresh. */

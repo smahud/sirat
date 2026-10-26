@@ -12,14 +12,15 @@ import { LetterTypesView } from './letter-types-view'
 import { AuditView, HealthView } from './audit-health-views'
 import { ImportView } from './import-view'
 import { SettingsView } from './settings-view'
+import { BackupView } from './backup-view'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
   FileText, LayoutDashboard, Building2, SlidersHorizontal, Users, ScrollText,
-  HeartPulse, FileSpreadsheet, Settings, LogOut, Loader2, X, FileStack,
+  HeartPulse, FileSpreadsheet, Settings, LogOut, Loader2, X, FileStack, DatabaseBackup,
 } from 'lucide-react'
 
-type ViewKey = 'dashboard' | 'letters' | 'units' | 'profiles' | 'lettertypes' | 'users' | 'audit' | 'health' | 'import' | 'settings'
+type ViewKey = 'dashboard' | 'letters' | 'units' | 'profiles' | 'lettertypes' | 'users' | 'backup' | 'audit' | 'health' | 'import' | 'settings'
 
 interface NavItem {
   key: ViewKey
@@ -52,6 +53,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: 'Sistem',
     items: [
+      { key: 'backup', label: 'Backup & Restore', icon: DatabaseBackup },
       { key: 'audit', label: 'Audit', icon: ScrollText, perm: 'audit.view' },
       { key: 'health', label: 'Kesehatan', icon: HeartPulse, perm: 'health.view' },
       { key: 'import', label: 'Import Excel', icon: FileSpreadsheet, perm: 'import.manage' },
@@ -82,7 +84,14 @@ export function AppShell() {
   }
 
   const sections = NAV_SECTIONS
-    .map(s => ({ ...s, items: s.items.filter(n => !n.perm || hasPerm(me.permissions, n.perm)) }))
+    .map(s => ({ ...s, items: s.items.filter(n => {
+      if (n.key === 'backup') {
+        // Menu backup tampil hanya bila user punya kapabilitas backup/restore apa pun
+        // (role global atau grant per scope) — B.2: tanpa permission, fungsi tak tersedia.
+        return !!me.backup && (me.backup.canExportAny || me.backup.canRestoreAny)
+      }
+      return !n.perm || hasPerm(me.permissions, n.perm)
+    }) }))
     .filter(s => s.items.length > 0)
 
   const initials = me.user.fullName
@@ -177,7 +186,7 @@ export function AppShell() {
             </Button>
           </div>
           <p className="mt-2.5 text-center text-[10px] text-white/30">
-            YAPSI Darussalam · v1.1
+            YAPSI Darussalam · v1.3
           </p>
         </div>
       </aside>
@@ -248,6 +257,7 @@ function MainContent({ view, me, onProfileUpdated }: { view: ViewKey; me: Me; on
     case 'profiles': return <ProfilesView />
     case 'lettertypes': return <LetterTypesView />
     case 'users': return <UsersView />
+    case 'backup': return <BackupView me={me} />
     case 'audit': return <AuditView />
     case 'health': return <HealthView />
     case 'import': return <ImportView />

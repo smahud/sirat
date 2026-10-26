@@ -5,6 +5,7 @@ import { ok, fail, handle, guardMutation, readJson } from '@/lib/api-helpers'
 import { requirePermission, requireUser } from '@/lib/api-helpers'
 import { writeAudit } from '@/lib/audit'
 import { letterScopeFilter, canAccessUnit, canAccessCommittee } from '@/lib/rbac'
+import { syncLetterReferences, ReferenceInput } from '@/lib/references'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
@@ -25,10 +26,26 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
           include: { versions: { orderBy: { versionNo: 'desc' } } },
         },
         profileVersion: { include: { profile: { select: { name: true } } } },
+        referencesFrom: {
+          select: {
+            id: true, refLetterId: true, refNumberText: true, isAutoLinked: true, createdAt: true,
+            refLetter: {
+              select: { id: true, officialNumber: true, legacyNumber: true, subject: true, status: true, letterDate: true,
+                issuingUnit: { select: { code: true } } },
+            },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+        _count: { select: { referencesTo: true } },
       },
     })
     if (!letter) return fail(404, 'NOT_FOUND', 'Surat tidak ditemukan atau di luar scope akses Anda')
-    return ok({ letter })
+    // Referensi MASUK difilter scope secara independen (H: hak melihat surat ini
+    // tidak otomatis membuka semua surat yang merujuk) — cukup hitung aman + ringkas
+    const incomingCount = await db.letterReference.count({
+      where: { refLetterId: id, letter: scope ?? undefined },
+    })
+    return ok({ letter: { ...letter, incomingRefCount: incomingCount } })
   })
 }
 
@@ -42,6 +59,12 @@ const patchSchema = z.object({
   letterTypeId: z.string().optional(),
   letterDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   committeeId: z.string().optional().nullable(),
+  // Referensi (G.6): hanya boleh diubah saat DRAFT — setelah final, referensi
+  // adalah fakta penerbitan; koreksi memerlukan mekanisme terotorisasi + audit.
+  references: z.array(z.object({
+    letterId: z.string().optional().nullable(),
+    refNumberText: z.string().trim().min(1).max(240),
+  })).max(20).optional(),
 })
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -100,6 +123,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         return fail(409, 'IMMUTABLE_COMPONENT',
           'Komponen nomor surat terbit tidak dapat diubah. Batalkan surat dan terbitkan pengganti.')
       }
+      // G.6: referensi surat final tidak boleh berubah diam-diam
+      if (body.references !== undefined) {
+        return fail(409, 'IMMUTABLE_REFERENCES',
+          'Referensi surat yang sudah final tidak dapat diubah. Gunakan mekanisme koreksi terotorisasi (audit trail).')
+      }
     }
     if (body.recipient !== undefined) { data.recipient = body.recipient; before.recipient = letter.recipient }
     if (body.subject !== undefined) { data.subject = body.subject; before.subject = letter.subject }
@@ -107,9 +135,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     const updated = await db.$transaction(async (tx) => {
       const u = await tx.letter.update({ where: { id }, data })
+      if (letter.status === 'DRAFT' && body.references !== undefined) {
+        await syncLetterReferences(tx, r.user, id, body.references as ReferenceInput[])
+      }
       await writeAudit(tx, {
         actorId: r.user.id, action: 'letter.update', entityType: 'letter', entityId: id,
-        correlationId: crypto.randomUUID(), metadata: { before, after: body },
+        correlationId: crypto.randomUUID(), metadata: { before, after: body, referencesReplaced: body.references !== undefined },
       })
       return u
     })

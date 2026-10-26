@@ -11,6 +11,7 @@ import { unitVisibilityFilter } from '@/lib/rbac'
 const createSchema = z.object({
   code: z.string().trim().min(1).max(32),
   name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(500).optional().nullable(), // keterangan (C.2)
 })
 
 export async function GET() {
@@ -62,6 +63,7 @@ export async function POST(req: NextRequest) {
 const patchSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   code: z.string().trim().min(1).max(32).optional(),
+  description: z.string().trim().max(500).optional().nullable(),
   status: z.enum(UNIT_STATUSES).optional(),
 })
 
@@ -82,9 +84,10 @@ export async function PATCH(req: NextRequest) {
     const unit = await db.unit.findUnique({ where: { id }, include: { _count: { select: { letters: true } } } })
     if (!unit) return fail(404, 'NOT_FOUND', 'Unit tidak ditemukan')
 
-    // FR-002: hapus fisik unit dengan histori diblokir (di sini: tidak menyediakan DELETE sama sekali)
-    const data: Record<string, string> = {}
+    // FR-002: hapus fisik unit dengan histori diblokir — kini via DELETE guarded di bawah
+    const data: Record<string, string | null> = {}
     if (parsed.data.name) data.name = parsed.data.name
+    if (parsed.data.description !== undefined) data.description = parsed.data.description
     if (parsed.data.code) {
       const dup = await db.unit.findFirst({ where: { code: parsed.data.code, id: { not: id } } })
       if (dup) return fail(409, 'CONFLICT', 'Kode unit sudah dipakai unit lain')
@@ -96,10 +99,60 @@ export async function PATCH(req: NextRequest) {
       const u = await tx.unit.update({ where: { id }, data })
       await writeAudit(tx, {
         actorId: r.user.id, action: 'unit.update', entityType: 'unit', entityId: id,
-        correlationId: r.correlationId, metadata: { before: { code: unit.code, name: unit.name, status: unit.status }, after: parsed.data },
+        correlationId: r.correlationId,
+        metadata: { before: { code: unit.code, name: unit.name, status: unit.status, description: unit.description }, after: parsed.data },
       })
       return u
     })
     return ok({ unit: updated })
+  })
+}
+
+const deleteSchema = z.object({ id: z.string().min(1) })
+
+/**
+ * Hapus unit (master prompt lanjutan C.4):
+ * - Fisik HANYA jika tidak punya dependensi (surat/kepanitiaan/assignment/profil/namespace/grant).
+ * - Ada dependensi → 409 HAS_HISTORY: gunakan status ARCHIVED (soft delete).
+ * - Unit aktif tidak bisa dihapus — nonaktifkan dulu (anti kecelakaan).
+ */
+export async function DELETE(req: NextRequest) {
+  return handle(async () => {
+    const guard = await guardMutation(req)
+    if (guard) return guard
+    const r = await requirePermission('unit.manage')
+    if ('error' in r) return r.error
+
+    const parsed = deleteSchema.safeParse(await readJson(req))
+    if (!parsed.success) return fail(400, 'VALIDATION', 'Parameter id wajib')
+    const { id } = parsed.data
+
+    const unit = await db.unit.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: { letters: true, committees: true, assignments: true, profiles: true, namespaces: true, backupGrants: true },
+        },
+      },
+    })
+    if (!unit) return fail(404, 'NOT_FOUND', 'Unit tidak ditemukan')
+    if (unit.status === 'ACTIVE') {
+      return fail(409, 'STILL_ACTIVE', 'Unit masih aktif — nonaktifkan terlebih dahulu sebelum menghapus')
+    }
+    const deps = unit._count
+    const depCount = deps.letters + deps.committees + deps.assignments + deps.profiles + deps.namespaces + deps.backupGrants
+    if (depCount > 0) {
+      return fail(409, 'HAS_HISTORY',
+        `Unit memiliki dependensi (${deps.letters} surat, ${deps.committees} kepanitiaan, ${deps.assignments} penugasan, ${deps.profiles} profil, ${deps.namespaces} namespace) — gunakan status Arsip agar histori tetap tersambung.`)
+    }
+
+    await db.$transaction(async (tx) => {
+      await tx.unit.delete({ where: { id } })
+      await writeAudit(tx, {
+        actorId: r.user.id, action: 'unit.delete', entityType: 'unit', entityId: id,
+        correlationId: r.correlationId, metadata: { code: unit.code, name: unit.name },
+      })
+    })
+    return ok({ deleted: true })
   })
 }

@@ -34,44 +34,95 @@ model User {
   updatedAt    DateTime @updatedAt
 
   assignments AccessAssignment[]
+  backupGrants BackupGrant[]
   issued      Letter[]          @relation("LetterIssuer")
 }
 
 model Unit {
-  id         String    @id @default(cuid())
-  code       String    @unique
-  name       String
-  storageKey String    @unique // slug stabil; tidak berubah ketika code berubah
-  status     String    @default("ACTIVE") // ACTIVE|INACTIVE|ARCHIVED
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  id          String    @id @default(cuid())
+  code        String    @unique
+  name        String
+  description String?   // keterangan tampilan (master prompt lanjutan C.2)
+  storageKey  String    @unique // slug stabil; tidak berubah ketika code berubah
+  status      String    @default("ACTIVE") // ACTIVE|INACTIVE|ARCHIVED
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
-  committees Committee[]
+  committees  Committee[]
   assignments AccessAssignment[]
-  namespaces CounterNamespace[]
-  profiles  NumberingProfile[]
-  letters   Letter[]          @relation("IssuingUnit")
+  namespaces  CounterNamespace[]
+  profiles    NumberingProfile[]
+  letters     Letter[]          @relation("IssuingUnit")
+  backupGrants BackupGrant[]
 }
 
 model Committee {
-  id         String    @id @default(cuid())
-  code       String
-  name       String
-  storageKey String    @unique
-  unitId     String
-  unit       Unit      @relation(fields: [unitId], references: [id])
-  startDate  DateTime?
-  endDate    DateTime?
-  status     String    @default("DRAFT") // DRAFT|ACTIVE|COMPLETED|ARCHIVED
+  id          String    @id @default(cuid())
+  code        String
+  name        String
+  description String?   // keterangan tampilan (master prompt lanjutan C.2)
+  storageKey  String    @unique
+  unitId      String
+  unit        Unit      @relation(fields: [unitId], references: [id])
+  startDate   DateTime?
+  endDate     DateTime?
+  status      String    @default("DRAFT") // DRAFT|ACTIVE|COMPLETED|ARCHIVED
   shareParentCounter Boolean @default(false) // eksplisit: pakai counter unit parent
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   assignments AccessAssignment[]
   profiles   NumberingProfile[]
+  backupGrants BackupGrant[]
 
   @@unique([unitId, code])
   letters    Letter[] @relation("LetterCommittee")
+}
+
+model LetterReference {
+  id            String   @id @default(cuid())
+  letterId      String
+  letter        Letter   @relation("RefSource", fields: [letterId], references: [id], onDelete: Cascade)
+  refLetterId   String?  // null = referensi manual (surat eksternal/tidak tersedia)
+  refLetter     Letter?  @relation("RefTarget", fields: [refLetterId], references: [id])
+  refNumberText String   // snapshot teks nomor referensi (fakta historis)
+  isAutoLinked  Boolean  @default(false) // true = terbentuk via exact match
+  createdBy     String?
+  createdAt     DateTime @default(now())
+
+  @@unique([letterId, refLetterId]) // NULL dianggap berbeda → beberapa ref manual per surat
+}
+
+model BackupGrant {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  unitId      String?
+  unit        Unit?     @relation(fields: [unitId], references: [id])
+  committeeId String?
+  committee   Committee? @relation(fields: [committeeId], references: [id])
+  canExport   Boolean   @default(false)
+  canRestore  Boolean   @default(false)
+  grantedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([userId, unitId, committeeId])
+}
+
+model BackupEvent {
+  id          String    @id @default(cuid())
+  kind        String    // FULL|SCOPED|SAFETY
+  action      String    // EXPORT|RESTORE|VALIDATE
+  actorId     String?
+  fileName    String?
+  sizeBytes   Int?
+  sha256      String?
+  status      String    @default("STARTED") // STARTED|RUNNING|COMPLETED|FAILED
+  scopeJson   String?   // JSON: unitIds/committeeIds/labels
+  metadata    String?   // JSON ringkasan (tanpa secret)
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
 }
 
 model AccessAssignment {
@@ -89,13 +140,16 @@ model AccessAssignment {
 }
 
 model LetterType {
-  id          String   @id @default(cuid())
-  code        String   @unique // snapshot dicetak saat terbit; perubahan kode hanya utk terbitan baru
-  name        String
-  description String?  // keterangan/kategori utk tooltip "Kode Surat" (master prompt C)
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String   @id @default(cuid())
+  code          String   @unique // snapshot dicetak saat terbit; perubahan kode hanya utk terbitan baru
+  name          String
+  description   String?  // keterangan/kategori utk tooltip "Kode Surat" (master prompt C)
+  purpose       String?  // fungsi/tujuan jenis surat (master prompt lanjutan D.2)
+  usageExamples String?  // contoh penggunaan, dipisah baris (D.2)
+  notes         String?  // catatan/petunjuk tambahan (D.2)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   letters     Letter[] @relation("LetterType")
 }
@@ -195,6 +249,8 @@ model Letter {
   updatedAt       DateTime  @updatedAt
 
   files           ArchiveFile[]
+  referencesFrom  LetterReference[] @relation("RefSource")
+  referencesTo    LetterReference[] @relation("RefTarget")
 
   @@unique([namespaceId, periodKey, sequence])
 }

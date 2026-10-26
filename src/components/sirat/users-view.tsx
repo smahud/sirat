@@ -6,7 +6,7 @@ import { apiGet, apiPatch, apiPost } from '@/lib/client'
 import { PageHeader, MiniTag } from './ui-bits'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -14,7 +14,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
-import { Users, ShieldCheck, Plus, AlertTriangle } from 'lucide-react'
+import { Users, ShieldCheck, Plus, AlertTriangle, BookOpen, ChevronDown } from 'lucide-react'
+import { ROLE_DOCS } from '@/lib/role-docs'
 
 interface UserRow {
   id: string; username: string; fullName: string; email: string | null; role: string; isActive: boolean
@@ -39,6 +40,7 @@ export function UsersView() {
   const qc = useQueryClient()
   const [editUser, setEditUser] = useState<UserRow | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
+  const [roleGuideOpen, setRoleGuideOpen] = useState(false)
 
   const users = useQuery({ queryKey: ['users'], queryFn: () => apiGet<{ users: UserRow[] }>('/api/users') })
   const units = useQuery({ queryKey: ['units'], queryFn: () => apiGet<{ units: UnitRow[] }>('/api/units') })
@@ -60,6 +62,56 @@ export function UsersView() {
           <Plus className="w-4 h-4 mr-1.5" /> Pengguna
         </Button>
       </PageHeader>
+
+      {/* Panduan role (master prompt lanjutan A.3/A.8) */}
+      <Card className="shadow-card mb-5">
+        <CardHeader className="pb-3">
+          <button
+            type="button"
+            className="w-full flex items-center gap-2 text-left"
+            onClick={() => setRoleGuideOpen(v => !v)}
+            aria-expanded={roleGuideOpen}
+          >
+            <span className="w-8 h-8 rounded-lg bg-emerald-soft text-emerald flex items-center justify-center"><BookOpen className="w-4 h-4" /></span>
+            <CardTitle className="text-[15px] font-semibold">Panduan Role &amp; Hak Akses</CardTitle>
+            <ChevronDown className={`w-4 h-4 ml-auto text-muted-foreground transition-transform ${roleGuideOpen ? 'rotate-180' : ''}`} />
+          </button>
+        </CardHeader>
+        {roleGuideOpen && (
+          <CardContent className="space-y-4">
+            <p className="text-[12.5px] text-muted-foreground leading-relaxed">
+              <span className="font-semibold text-foreground">Role</span> adalah profil kewenangan dasar;
+              <span className="font-semibold text-foreground"> permission efektif</span> = role + assignment scope.
+              Assignment bukan permission — ditugaskan di unit MI tidak otomatis membuka MTs atau kepanitiaan lain.
+            </p>
+            <div className="grid gap-3 md:grid-cols-2">
+              {Object.entries(ROLE_DOCS).map(([key, doc]) => (
+                <details key={key} className="rounded-xl border bg-surface p-3.5 group">
+                  <summary className="cursor-pointer text-[13px] font-semibold flex items-center gap-2 select-none">
+                    {key === 'SYSTEM_ADMIN' && <ShieldCheck className="w-4 h-4 text-gold-dark" />}
+                    {doc.label}
+                  </summary>
+                  <div className="mt-2.5 space-y-2 text-[12px] leading-relaxed">
+                    <p className="text-muted-foreground">{doc.description}</p>
+                    <div>
+                      <p className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">Tidak otomatis dimiliki</p>
+                      <ul className="mt-0.5 space-y-0.5">
+                        {doc.notGranted.map((n, i) => <li key={i} className="flex gap-1.5"><span className="text-destructive font-bold">×</span>{n}</li>)}
+                      </ul>
+                    </div>
+                    <div>
+                      <p className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">Contoh penugasan</p>
+                      <ul className="mt-0.5 space-y-0.5">
+                        {doc.examples.map((x, i) => <li key={i} className="flex gap-1.5"><span className="text-emerald font-bold">•</span>{x}</li>)}
+                      </ul>
+                    </div>
+                  </div>
+                </details>
+              ))}
+            </div>
+          </CardContent>
+        )}
+      </Card>
 
       <Card className="shadow-card">
         <CardContent className="p-0">
@@ -223,6 +275,14 @@ function UserForm({ open, user, units, committees, onClose, onSaved }: {
                 {ROLES.map(r => <SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>)}
               </SelectContent>
             </Select>
+            {/* Ringkasan dokumen role (A.3): jelaskan pilihan yang sedang dipilih */}
+            {ROLE_DOCS[role as keyof typeof ROLE_DOCS] && (
+              <div className="rounded-lg bg-muted/50 border p-2.5 text-[11.5px] leading-relaxed space-y-1.5">
+                <p className="text-muted-foreground">{ROLE_DOCS[role as keyof typeof ROLE_DOCS].description}</p>
+                <p><span className="font-semibold">Lingkup:</span> <span className="text-muted-foreground">{ROLE_DOCS[role as keyof typeof ROLE_DOCS].scopeSummary}</span></p>
+                <p><span className="font-semibold">Batas delegasi:</span> <span className="text-muted-foreground">{ROLE_DOCS[role as keyof typeof ROLE_DOCS].delegationLimit}</span></p>
+              </div>
+            )}
             <p className="text-[11px] text-muted-foreground">
               Administrator Sistem / Admin Organisasi / Auditor = akses global. Role lain memerlukan assignment scope di bawah.
             </p>
