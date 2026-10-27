@@ -8,10 +8,12 @@ import { parseDsl } from '@/lib/numbering/dsl'
 import { renderNumber, requiredInputs, formFields } from '@/lib/numbering/render'
 import { resolveFieldValuesForPreview, unresolvedNumberFields } from '@/lib/numbering/fields'
 import { periodKeyFor } from '@/lib/numbering/validate'
+import { activeProfileCandidates, ActiveProfileCandidate } from '@/lib/numbering/profile-resolution'
 
 const querySchema = z.object({
   unitId: z.string().min(1),
   committeeId: z.string().optional(),
+  profileId: z.string().optional(), // v1.8: pilih profil eksplisit (konteks multi-profil)
   direction: z.enum(['INTERNAL', 'EXTERNAL']).optional(), // LEGACY v1 (draft lama)
   fields: z.string().optional(), // JSON { fieldKey: optionId } — pilihan Dropdown operator (v1.6)
   letterTypeId: z.string().optional(),
@@ -46,7 +48,7 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url)
     const parsed = querySchema.safeParse(Object.fromEntries(url.searchParams.entries()))
     if (!parsed.success) return fail(400, 'VALIDATION', 'Parameter tidak valid', { issues: parsed.error.issues })
-    const { unitId, committeeId, direction, letterTypeId, letterDate } = parsed.data
+    const { unitId, committeeId, profileId, direction, letterTypeId, letterDate } = parsed.data
     const fieldValues = parseFieldsParam(url.searchParams.get('fields') ?? undefined)
 
     const unit = await db.unit.findUnique({ where: { id: unitId } })
@@ -59,34 +61,41 @@ export async function GET(req: NextRequest) {
       if (!canAccessCommittee(r.user, committee)) return fail(403, 'FORBIDDEN', 'Anda tidak memiliki akses ke kepanitiaan ini')
     }
 
-    // Resolusi profil aktif (sama seperti issue)
-    const activeVersion = committee
-      ? (await db.numberingProfileVersion.findFirst({
-            where: { status: 'ACTIVE', profile: { committeeId: committee.id } },
-            orderBy: { version: 'desc' },
-          }))
-        ?? (await db.numberingProfileVersion.findFirst({
-            where: { status: 'ACTIVE', profile: { ownerId: unitId, committeeId: null } },
-            orderBy: { version: 'desc' },
-          }))
-      : await db.numberingProfileVersion.findFirst({
-          where: { status: 'ACTIVE', profile: { ownerId: unitId, committeeId: null } },
-          orderBy: { version: 'desc' },
-        })
-    if (!activeVersion) {
-      return ok({ available: false, reason: 'Tidak ada profil penomoran aktif untuk konteks ini' })
+    // Resolusi profil aktif (v1.8 multi-profil): kandidat = profil panitia (bila
+    // ada) lalu profil unit; profileId eksplisit memilih salah satunya.
+    const candidates = await activeProfileCandidates(db, unitId, committee?.id ?? null)
+    let activeVersion: ActiveProfileCandidate | undefined
+    if (profileId) {
+      activeVersion = candidates.find(c => c.profileId === profileId)
+      if (!activeVersion) {
+        return fail(404, 'PROFILE_NOT_AVAILABLE',
+          'Profil penomoran tidak tersedia untuk konteks ini — muat ulang formulir dan pilih ulang profil')
+      }
+    } else {
+      activeVersion = candidates[0]
     }
+    if (!activeVersion) {
+      return ok({ available: false, reason: 'Tidak ada profil penomoran aktif untuk konteks ini', profiles: [] })
+    }
+    const profileOptions = candidates.map(c => ({
+      id: c.profileId,
+      name: c.name,
+      scope: c.committeeProfile ? 'committee' as const : 'unit' as const,
+    }))
     const dsl = parseDsl(activeVersion.dsl)
 
     // Spesifikasi formulir dinamis — FE merender Dropdown dari sini (B.2/C)
     const fieldsSpec = formFields(dsl)
 
-    // Namespace efektif untuk estimasi counter
-    const ns = committee
-      ? (committee.shareParentCounter
-          ? await db.counterNamespace.findFirst({ where: { unitId, committeeId: null } })
-          : await db.counterNamespace.findFirst({ where: { committeeId: committee.id } }))
-      : await db.counterNamespace.findFirst({ where: { unitId, committeeId: null } })
+    // Namespace efektif untuk estimasi counter (v1.8: ikut namespace yang dicap
+    // aktivasi pada versi profil terpilih — deterministik; fallback resolusi lama)
+    const ns = activeVersion.namespaceId
+      ? await db.counterNamespace.findUnique({ where: { id: activeVersion.namespaceId } })
+      : committee
+        ? (committee.shareParentCounter
+            ? await db.counterNamespace.findFirst({ where: { unitId, committeeId: null } })
+            : await db.counterNamespace.findFirst({ where: { committeeId: committee.id } }))
+        : await db.counterNamespace.findFirst({ where: { unitId, committeeId: null } })
 
     const lt = letterTypeId ? await db.letterType.findUnique({ where: { id: letterTypeId } }) : null
 
@@ -127,6 +136,9 @@ export async function GET(req: NextRequest) {
         note: 'Perkiraan nomor — bukan reservasi. Nomor resmi hanya dialokasikan saat penerbitan berhasil.',
         parts: rendered.parts,
         fields: fieldsSpec,
+        profileId: activeVersion.profileId,
+        profileName: activeVersion.name,
+        profiles: profileOptions,
         requiredInputs: requiredInputs(dsl),
         missingInputs: [
           ...(letterTypeId ? [] : ['letterTypeId']),
@@ -140,6 +152,9 @@ export async function GET(req: NextRequest) {
         available: true,
         error: (e as Error).message,
         fields: fieldsSpec,
+        profileId: activeVersion.profileId,
+        profileName: activeVersion.name,
+        profiles: profileOptions,
         requiredInputs: requiredInputs(dsl),
         missingInputs: [
           ...(letterTypeId ? [] : ['letterTypeId']),

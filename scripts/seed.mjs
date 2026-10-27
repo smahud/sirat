@@ -7,6 +7,8 @@
 //   bisa membuat surat bernomor (v1.6.1: dulu DRAFT & menimbulkan kebingungan
 //   "komponen nomor tidak muncul"; aktivasi kini bagian seed, kebijakan counter
 //   YEARLY/LETTER_DATE dari saran preset dan masih bisa diganti selama 0 surat)
+// - Profil CONTOH berstatus DRAFT untuk unit MI (v1.7): mendemonstrasikan builder
+//   lengkap — 2 dropdown dalam nomor + 1 field metadata; tinggal diaktivasi.
 // - Namespace default per unit (counter terpisah antar unit)
 // Jalankan: bun scripts/seed.mjs (atau node scripts/seed.mjs)
 import { PrismaClient } from '@prisma/client'
@@ -19,6 +21,12 @@ const prisma = new PrismaClient()
 
 const DEFAULTS = JSON.parse(
   readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'letter-types-defaults.json'), 'utf8'),
+)
+
+// Profil contoh DRAFT (v1.7) — definisi dibagi dengan scripts/create-example-profile.mjs
+// dan tests/example-profile.test.ts (schema + validasi aktivasi + render diuji unit).
+const EXAMPLE_PROFILE = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'example-numbering-profile.json'), 'utf8'),
 )
 
 // Preset DSL v2 (Dynamic Numbering Profile Builder, v1.6):
@@ -139,6 +147,30 @@ async function main() {
         namespaceId: ns?.id ?? null,
       },
     })
+  }
+
+  // Profil CONTOH DRAFT untuk unit MI (v1.7 — permintaan pemilik "buat baru draft
+  // profile surat sebagai contoh"): mendemonstrasikan seluruh kemampuan builder
+  // sehingga admin pusat punya acuan konkret saat membuat profil unit lain.
+  // Instalasi yang sudah berjalan: jalankan scripts/create-example-profile.mjs.
+  const miUnit = await prisma.unit.findUnique({ where: { code: EXAMPLE_PROFILE.unitCode } })
+  if (miUnit) {
+    const existingExample = await prisma.numberingProfile.findFirst({
+      where: { name: EXAMPLE_PROFILE.name, ownerId: miUnit.id, committeeId: null },
+    })
+    if (!existingExample) {
+      await prisma.numberingProfile.create({
+        data: {
+          name: EXAMPLE_PROFILE.name,
+          ownerId: miUnit.id,
+          committeeId: null,
+          versions: { create: { version: 1, status: 'DRAFT', dsl: JSON.stringify(EXAMPLE_PROFILE.dsl) } },
+        },
+      })
+      console.log(`- profil contoh DRAFT (${EXAMPLE_PROFILE.name}) utk unit ${EXAMPLE_PROFILE.unitCode} — aktivasi via menu Profil Nomor`)
+    } else {
+      console.log(`- profil contoh sudah ada (id ${existingExample.id}) — dilewati`)
+    }
   }
 
   // Admin bootstrap dari env (jangan hardcode password di repo)

@@ -56,6 +56,66 @@ export async function apiDelete<T = unknown>(path: string): Promise<T> {
   return api<T>(path, { method: 'DELETE' })
 }
 
+/**
+ * Salin teks ke clipboard dengan fallback legacy (textarea + execCommand)
+ * untuk konteks non-secure mis. intranet HTTP — nomor surat tetap bisa disalin.
+ */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch { /* jatuh ke jalur legacy */ }
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.setAttribute('readonly', '')
+    ta.style.position = 'fixed'
+    ta.style.top = '-9999px'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.focus()
+    ta.select()
+    const ok = document.execCommand('copy')
+    ta.remove()
+    return ok
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Upload berkas via XMLHttpRequest — satu-satunya API browser yang mengirim
+ * progres upload (fetch tidak mendukung upload progress). Dipakai arsip digital.
+ */
+export function apiUpload<T = unknown>(
+  path: string,
+  file: Blob,
+  headers: Record<string, string> = {},
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', path)
+    xhr.withCredentials = true
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v)
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded, e.total)
+    }
+    xhr.onload = () => {
+      let data: unknown = null
+      try { data = JSON.parse(xhr.responseText) } catch { /* body kosong */ }
+      if (xhr.status >= 200 && xhr.status < 300) return resolve(data as T)
+      const err = (data as { error?: { code?: string; message?: string } })?.error
+      reject(new ApiError(xhr.status, err?.code ?? 'UNKNOWN', err?.message ?? `HTTP ${xhr.status}`, data))
+    }
+    xhr.onerror = () => reject(new ApiError(0, 'NETWORK', 'Koneksi terputus saat mengunggah — periksa jaringan lalu coba lagi'))
+    xhr.onabort = () => reject(new ApiError(0, 'ABORTED', 'Unggah dibatalkan'))
+    xhr.send(file)
+  })
+}
+
 /** Unduh berkas via API ter-autentikasi (cookie sesi) dan simpan sebagai file. */
 export async function apiDownload(path: string, fallbackName: string): Promise<void> {
   const res = await fetch(path, { credentials: 'same-origin' })

@@ -11,8 +11,9 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
-import { Info, Hash, Building2, CalendarDays, User, MessageSquareText, StickyNote, Users2, Lock, Link2, X, FileSearch } from 'lucide-react'
+import { Info, Hash, Building2, CalendarDays, User, MessageSquareText, StickyNote, Users2, Lock, Link2, X, FileSearch, SlidersHorizontal } from 'lucide-react'
 import { UnitRow } from './letters-view'
+import { CopyButton } from './ui-bits'
 import { useMe, hasPerm, canUseUnitForRegularLetter, canUseCommitteeForLetter } from './use-session'
 
 interface LetterTypeRow {
@@ -51,6 +52,7 @@ export function CreateLetterDialog({ open, onClose, onCreated, onNavigate }: {
   const qc = useQueryClient()
   const [unitId, setUnitId] = useState('')
   const [committeeId, setCommitteeId] = useState('NONE')
+  const [profileId, setProfileId] = useState('') // v1.8: pilihan profil penomoran (multi-profil)
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({}) // pilihan Dropdown dinamis (v1.6)
   const [letterTypeId, setLetterTypeId] = useState('')
   const [letterDate, setLetterDate] = useState(new Date().toISOString().slice(0, 10))
@@ -73,6 +75,7 @@ export function CreateLetterDialog({ open, onClose, onCreated, onNavigate }: {
     setLastOpen(true)
     setUnitId('')
     setCommitteeId('NONE')
+    setProfileId('')
     setFieldValues({})
     setLetterTypeId('')
     setLetterDate(new Date().toISOString().slice(0, 10))
@@ -131,10 +134,17 @@ export function CreateLetterDialog({ open, onClose, onCreated, onNavigate }: {
   // Ganti unit/kepanitiaan → profil penomoran konteks ikut berganti. Pilihan Dropdown
   // lama bisa merujuk opsi yang tidak dikenal profil baru (E.5 UNKNOWN_OPTION) —
   // reset agar formulir selalu konsisten dengan profil yang sedang aktif.
+  // v1.8: ganti profil eksplisit juga mereset pilihan (beda profil = beda field).
   const ctxKey = `${effectiveUnitId ?? ''}|${effectiveCommitteeId ?? 'NONE'}`
   const [lastCtxKey, setLastCtxKey] = useState('')
+  const [lastProfileId, setLastProfileId] = useState('')
   if (ctxKey !== lastCtxKey) {
     setLastCtxKey(ctxKey)
+    setProfileId('')
+    if (Object.keys(fieldValues).length > 0) setFieldValues({})
+  }
+  if (profileId !== lastProfileId) {
+    setLastProfileId(profileId)
     if (Object.keys(fieldValues).length > 0) setFieldValues({})
   }
 
@@ -144,15 +154,17 @@ export function CreateLetterDialog({ open, onClose, onCreated, onNavigate }: {
   const selectedType = letterTypes.data?.letterTypes.find(t => t.id === letterTypeId)
 
   // Preview nomor (perkiraan) + spesifikasi field formulir dinamis dari profil aktif (v1.6)
+  // v1.8: profileId eksplisit bila operator memilih profil pada konteks multi-profil.
   const previewParams = useMemo(() => {
     const p = new URLSearchParams({ unitId: effectiveUnitId })
     if (effectiveCommitteeId !== 'NONE') p.set('committeeId', effectiveCommitteeId)
+    if (profileId) p.set('profileId', profileId)
     if (letterTypeId) p.set('letterTypeId', letterTypeId)
     if (letterDate) p.set('letterDate', letterDate)
     const filled = Object.fromEntries(Object.entries(fieldValues).filter(([, v]) => v))
     if (Object.keys(filled).length > 0) p.set('fields', JSON.stringify(filled))
     return p.toString()
-  }, [effectiveUnitId, effectiveCommitteeId, fieldValues, letterTypeId, letterDate])
+  }, [effectiveUnitId, effectiveCommitteeId, profileId, fieldValues, letterTypeId, letterDate])
 
   const preview = useQuery({
     queryKey: ['preview', previewParams],
@@ -206,6 +218,7 @@ export function CreateLetterDialog({ open, onClose, onCreated, onNavigate }: {
       const body = {
         issuingUnitId: effectiveUnitId,
         committeeId: effectiveCommitteeId === 'NONE' ? null : effectiveCommitteeId,
+        numberingProfileId: profileId || null,
         fieldValues: Object.fromEntries(Object.entries(fieldValues).filter(([, v]) => v)),
         letterTypeId,
         letterDate,
@@ -284,6 +297,36 @@ export function CreateLetterDialog({ open, onClose, onCreated, onNavigate }: {
               )}
             </div>
           </div>
+
+          {/* v1.8: pilih profil penomoran bila konteks punya LEBIH DARI SATU profil aktif
+              (unit maupun kepanitiaan) — satu organisasi bisa punya beberapa format
+              surat resmi yang membedakan cara penggunaannya. */}
+          {(preview.data?.profiles?.length ?? 0) > 1 && (
+            <div className="space-y-1.5">
+              <Label className="text-[12px] font-semibold flex items-center gap-1.5">
+                <SlidersHorizontal className="w-3.5 h-3.5 text-muted-foreground" /> Profil penomoran
+                <span className="text-[10.5px] font-normal text-muted-foreground">(format nomor surat)</span>
+              </Label>
+              <Select
+                value={profileId || preview.data?.profileId || ''}
+                onValueChange={(v) => setProfileId(v)}
+              >
+                <SelectTrigger className="bg-surface">
+                  <SelectValue placeholder="Pilih profil" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(preview.data?.profiles ?? []).map(p => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}{p.scope === 'committee' ? ' (kepanitiaan)' : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10.5px] text-muted-foreground">
+                Unit/kepanitiaan ini memiliki beberapa profil — pilih format nomor yang sesuai surat ini.
+              </p>
+            </div>
+          )}
 
           {/* Field formulir dinamis dari profil penomoran (v1.6 — mis. Arah Surat, Klasifikasi) */}
           {dynFields.length > 0 && (
@@ -455,13 +498,22 @@ export function CreateLetterDialog({ open, onClose, onCreated, onNavigate }: {
           </div>
 
           {/* Panel preview nomor */}
-          {preview.data?.available && (
+          {preview.data?.available && preview.data.previewNumber && (
             <div className="rounded-xl border border-emerald/25 bg-gradient-to-br from-emerald-soft to-surface p-4">
               <div className="flex items-center gap-2 mb-2">
                 <div className="w-7 h-7 rounded-lg bg-emerald text-white flex items-center justify-center">
                   <Hash className="w-3.5 h-3.5" />
                 </div>
                 <p className="text-[12px] font-semibold text-emerald-deep">Perkiraan nomor</p>
+                {/* v1.7: akses copy saat menyusun draft — nomor lazim dipakai di
+                    naskah surat fisik/digital sebelum diterbitkan di sistem. */}
+                <CopyButton
+                  value={preview.data.previewNumber}
+                  label="Salin perkiraan nomor"
+                  toastLabel="Perkiraan nomor tersalin"
+                  iconSize={14}
+                  className="p-1 -ml-1"
+                />
                 <span className="ml-auto text-[10px] font-medium uppercase tracking-wide text-muted-foreground">belum dialokasikan</span>
               </div>
               <p className="font-mono text-lg font-bold text-emerald-deep tracking-tight break-all">
@@ -470,6 +522,9 @@ export function CreateLetterDialog({ open, onClose, onCreated, onNavigate }: {
               <p className="text-[11.5px] text-muted-foreground mt-1.5 leading-relaxed">
                 {preview.data.note}
                 {preview.data.error && <span className="text-destructive"> {preview.data.error}</span>}
+                {(preview.data.profiles?.length ?? 0) <= 1 && preview.data.profileName && (
+                  <span className="block mt-0.5">Profil: <span className="font-medium text-foreground/80">{preview.data.profileName}</span></span>
+                )}
               </p>
             </div>
           )}
@@ -518,7 +573,11 @@ export function CreateLetterDialog({ open, onClose, onCreated, onNavigate }: {
 
 /**
  * ⓘ Kode Surat (master prompt C): popover dari data master LetterType — bukan hardcode.
- * Dukung hover (desktop), tap (layar sentuh), dan keyboard (focus + Enter/Space).
+ * v1.8: buka/tutup HANYA lewat klik/tap (toggle) — handler hover dibuang karena
+ * menyebabkan bubble tertutup saat kursor berpindah dari ⓘ ke isi (mouseleave
+ * melewati celah offset), sehingga teks panjang tak bisa dibaca/di-scroll.
+ * Isi dibatasi tinggi viewport (65dvh) dan DAPAT di-scroll — keterangan panjang
+ * tetap terbaca utuh di desktop maupun HP.
  */
 export function LetterTypeInfo({ selected }: { selected?: LetterTypeRow }) {
   const [open, setOpen] = useState(false)
@@ -528,24 +587,21 @@ export function LetterTypeInfo({ selected }: { selected?: LetterTypeRow }) {
         <button
           type="button"
           aria-label="Keterangan kode surat"
+          aria-expanded={open}
           className="inline-flex w-4 h-4 items-center justify-center rounded-full border border-muted-foreground/40 text-[10px] font-bold text-muted-foreground hover:text-emerald hover:border-emerald transition-colors align-middle"
           onClick={(e) => { e.preventDefault(); setOpen(v => !v) }}
-          onMouseEnter={() => setOpen(true)}
-          onMouseLeave={() => setOpen(false)}
-          onBlur={() => setOpen(false)}
         >
           i
         </button>
       </PopoverTrigger>
       <PopoverContent
         className="w-80 p-0"
+        collisionPadding={8}
         onOpenAutoFocus={(e) => e.preventDefault()}
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
       >
         {selected ? (
-          <div className="p-3.5 space-y-2 max-h-72 overflow-y-auto scrollbar-slim">
-            <div className="flex items-center justify-between gap-2">
+          <div className="p-3.5 space-y-2 max-h-[min(22rem,50dvh)] overflow-y-auto scrollbar-slim overscroll-contain">
+            <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-2">
               <p className="text-[13px] font-semibold">Kode Surat</p>
               <div className="flex items-center gap-1.5">
                 {selected.category && (
@@ -554,6 +610,14 @@ export function LetterTypeInfo({ selected }: { selected?: LetterTypeRow }) {
                 <span className="font-mono text-[12px] font-bold text-emerald-deep bg-emerald-soft rounded-md px-2 py-0.5">
                   {selected.code}
                 </span>
+                <button
+                  type="button"
+                  aria-label="Tutup keterangan"
+                  onClick={() => setOpen(false)}
+                  className="inline-flex items-center justify-center rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                >
+                  <X className="w-3.5 h-3.5" aria-hidden />
+                </button>
               </div>
             </div>
             <div>
@@ -617,6 +681,10 @@ export interface PreviewRes {
   reason?: string
   error?: string
   fields?: DynFieldSpec[]
+  /** v1.8: profil yang dipakai preview + daftar kandidat utk selector */
+  profileId?: string
+  profileName?: string
+  profiles?: { id: string; name: string; scope: 'committee' | 'unit' }[]
 }
 
 /** Spesifikasi field formulir dinamis dari profil penomoran aktif (v1.6). */

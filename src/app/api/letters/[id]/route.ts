@@ -6,6 +6,7 @@ import { requirePermission, requireUser } from '@/lib/api-helpers'
 import { writeAudit } from '@/lib/audit'
 import { letterScopeFilter, canAccessUnit, canAccessCommittee } from '@/lib/rbac'
 import { syncLetterReferences, ReferenceInput } from '@/lib/references'
+import { activeProfileCandidates } from '@/lib/numbering/profile-resolution'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
@@ -56,6 +57,7 @@ const patchSchema = z.object({
   notes: z.string().trim().max(2000).optional().nullable(),
   // khusus DRAFT: komponen boleh diubah sebelum terbit
   direction: z.enum(['INTERNAL', 'EXTERNAL']).optional(), // LEGACY v1
+  numberingProfileId: z.string().min(1).optional().nullable(), // v1.8: ganti profil pilihan (DRAFT saja)
   fieldValues: z.record(
     z.string().regex(/^[a-z][a-z0-9_]{1,31}$/),
     z.string().min(1).max(64),
@@ -99,6 +101,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     if (letter.status === 'DRAFT') {
       if (body.direction) { data.direction = body.direction; before.direction = letter.direction }
+      if (body.numberingProfileId !== undefined) {
+        // v1.8: ganti profil pilihan — validasi terhadap konteks EFEKTIF surat
+        // (committeeId baru bila ikut diubah dalam request yang sama).
+        const effectiveCommitteeId = body.committeeId !== undefined
+          ? (body.committeeId || null)
+          : letter.committeeId
+        if (body.numberingProfileId) {
+          const candidates = await activeProfileCandidates(db, letter.issuingUnitId, effectiveCommitteeId)
+          if (!candidates.some(c => c.profileId === body.numberingProfileId)) {
+            return fail(409, 'PROFILE_NOT_ACTIVE',
+              'Profil penomoran yang dipilih tidak aktif / tidak tersedia untuk konteks surat ini — pilih ulang profil')
+          }
+        }
+        data.numberingProfileId = body.numberingProfileId // null = kembali ke resolusi otomatis
+        before.numberingProfileId = letter.numberingProfileId
+      }
       if (body.fieldValues !== undefined) {
         data.fieldValues = body.fieldValues && Object.keys(body.fieldValues).length > 0
           ? JSON.stringify(body.fieldValues)
@@ -129,7 +147,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
     } else {
       // Surat terbit: komponen nomor tidak boleh berubah
-      if (body.direction || body.fieldValues !== undefined || body.letterTypeId || body.letterDate !== undefined || body.committeeId !== undefined) {
+      if (body.direction || body.numberingProfileId !== undefined || body.fieldValues !== undefined || body.letterTypeId || body.letterDate !== undefined || body.committeeId !== undefined) {
         return fail(409, 'IMMUTABLE_COMPONENT',
           'Komponen nomor surat terbit tidak dapat diubah. Batalkan surat dan terbitkan pengganti.')
       }

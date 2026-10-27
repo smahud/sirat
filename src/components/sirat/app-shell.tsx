@@ -221,7 +221,7 @@ export function AppShell() {
             </Button>
           </div>
           <p className="mt-2.5 text-center text-[10px] text-white/30">
-            YAPSI Darussalam · v1.6
+            YAPSI Darussalam · v1.7
           </p>
         </div>
       </aside>

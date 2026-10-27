@@ -7,6 +7,7 @@ import { parseDsl } from '@/lib/numbering/dsl'
 import { renderNumber } from '@/lib/numbering/render'
 import { periodKeyFor } from '@/lib/numbering/validate'
 import { resolveFieldValues, FieldResolutionError } from '@/lib/numbering/fields'
+import { resolveActiveVersionForLetter } from '@/lib/numbering/profile-resolution'
 import { normalizeNumber } from '@/lib/constants'
 import { createHash } from 'crypto'
 import { ResolvedUser } from '@/lib/rbac'
@@ -100,24 +101,15 @@ export async function issueLetter(params: {
         if (!letter.letterType) throw new ServiceError(400, 'VALIDATION', 'Jenis surat wajib dipilih')
         if (!letter.letterType.isActive) throw new ServiceError(409, 'LETTER_TYPE_INACTIVE', 'Jenis surat tidak aktif')
 
-        // 4) Profil aktif: khusus kepanitiaan dulu, lalu profil unit
-        const activeVersion = letter.committeeId
-          ? (await tx.numberingProfileVersion.findFirst({
-              where: { status: 'ACTIVE', profile: { committeeId: letter.committeeId } },
-              orderBy: { version: 'desc' },
-              include: { profile: true },
-            }))
-            ?? (await tx.numberingProfileVersion.findFirst({
-              where: { status: 'ACTIVE', profile: { ownerId: letter.issuingUnitId, committeeId: null } },
-              orderBy: { version: 'desc' },
-              include: { profile: true },
-            }))
-          : await tx.numberingProfileVersion.findFirst({
-              where: { status: 'ACTIVE', profile: { ownerId: letter.issuingUnitId, committeeId: null } },
-              orderBy: { version: 'desc' },
-              include: { profile: true },
-            })
-        if (!activeVersion) throw new ServiceError(409, 'NO_ACTIVE_PROFILE', 'Tidak ada profil penomoran aktif untuk konteks ini')
+        // 4) Profil aktif (v1.8 multi-profil): surat boleh memilih profil eksplisit
+        //   (numberingProfileId) — versi ACTIVE profil itulah yang dipakai. Tanpa
+        //   pilihan (surat lama): profil kepanitiaan dulu, lalu profil unit.
+        const activeVersion = await resolveActiveVersionForLetter(tx, letter)
+        if (!activeVersion) {
+          throw new ServiceError(409, 'NO_ACTIVE_PROFILE', letter.numberingProfileId
+            ? 'Profil penomoran yang dipilih surat ini sudah tidak memiliki versi aktif — ubah draft (pilih profil lain) atau hubungi admin pusat'
+            : 'Tidak ada profil penomoran aktif untuk konteks ini')
+        }
 
         const dsl = parseDsl(activeVersion.dsl)
 
@@ -138,12 +130,16 @@ export async function issueLetter(params: {
           throw e
         }
 
-        // 5) Namespace counter: teknis, independen dari teks nomor
-        const ns = letter.committee
-          ? (letter.committee.shareParentCounter
-              ? await tx.counterNamespace.findFirst({ where: { unitId: letter.issuingUnitId, committeeId: null } })
-              : await tx.counterNamespace.findFirst({ where: { committeeId: letter.committeeId } }))
-          : await tx.counterNamespace.findFirst({ where: { unitId: letter.issuingUnitId, committeeId: null } })
+        // 5) Namespace counter (v1.8): ikut namespace yang dicap aktivasi pada versi
+        // profil terpilih — deterministik pada unit dengan banyak namespace.
+        // Fallback resolusi lama (shareParentCounter panitia / unit) bila kosong.
+        const ns = activeVersion.namespaceId
+          ? await tx.counterNamespace.findUnique({ where: { id: activeVersion.namespaceId } })
+          : letter.committee
+            ? (letter.committee.shareParentCounter
+                ? await tx.counterNamespace.findFirst({ where: { unitId: letter.issuingUnitId, committeeId: null } })
+                : await tx.counterNamespace.findFirst({ where: { committeeId: letter.committeeId } }))
+            : await tx.counterNamespace.findFirst({ where: { unitId: letter.issuingUnitId, committeeId: null } })
         if (!ns) throw new ServiceError(409, 'NO_NAMESPACE', 'Namespace counter belum dikonfigurasi untuk konteks ini')
 
         // 6) Period key sesuai kebijakan reset
@@ -200,7 +196,7 @@ export async function issueLetter(params: {
             normalizedNumber: normalized,
             namespaceId: ns.id,
             periodKey,
-            profileVersionId: activeVersion.id,
+            profileVersionId: activeVersion.versionId,
             issuedAt: now,
             issuerId: actor.id,
             numberSnapshot: JSON.stringify({

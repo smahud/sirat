@@ -1,7 +1,11 @@
 'use client'
 
 // Komponen visual bersama SIRAT — konsisten di seluruh view.
+import { useState } from 'react'
 import { cn } from '@/lib/utils'
+import { Check, Copy } from 'lucide-react'
+import { copyText } from '@/lib/client'
+import { toast } from 'sonner'
 import type { LucideIcon } from 'lucide-react'
 
 /** Kepala halaman: judul serif + deskripsi + aksi kanan. */
@@ -138,5 +142,56 @@ export function MiniTag({ children, tone = 'slate' }: {
     <span className={cn('inline-flex items-center rounded-md border px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide', tones[tone])}>
       {children}
     </span>
+  )
+}
+
+/**
+ * Tombol salin teks (v1.7 — permintaan pemilik: akses copy nomor surat di semua
+ * posisi yang dibutuhkan: pratinjau saat draft, nomor resmi saat terbit, daftar surat).
+ * Umpan balik: ikon berubah jadi centang 1,6 dtk + toast opsional.
+ * `tone="onDark"` untuk latar gelap (hero nomor surat).
+ */
+export function CopyButton({ value, label = 'Salin nomor', toastLabel, tone = 'default', iconSize = 15, className, disabled }: {
+  value: string
+  label?: string
+  toastLabel?: string
+  tone?: 'default' | 'onDark'
+  iconSize?: number
+  className?: string
+  disabled?: boolean
+}) {
+  const [copied, setCopied] = useState(false)
+  const onCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    const ok = await copyText(value)
+    if (ok) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1600)
+      if (toastLabel) toast.success(toastLabel)
+    } else {
+      toast.error(`Gagal menyalin — salin manual: ${value}`)
+    }
+  }
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onCopy}
+      disabled={disabled || !value}
+      className={cn(
+        'inline-flex items-center justify-center rounded-md p-1.5 transition-colors disabled:opacity-40 disabled:pointer-events-none',
+        tone === 'onDark'
+          ? 'text-white/75 hover:text-white hover:bg-white/15 active:bg-white/25'
+          : 'text-muted-foreground hover:text-emerald hover:bg-emerald-soft/60 active:bg-emerald-soft',
+        className,
+      )}
+    >
+      {copied
+        ? <Check size={iconSize} className="text-emerald" aria-hidden />
+        : <Copy size={iconSize} aria-hidden />}
+      <span className="sr-only">{label}</span>
+    </button>
   )
 }

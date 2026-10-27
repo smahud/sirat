@@ -117,7 +117,7 @@ export function ProfilesView() {
     <div>
       <PageHeader
         title="Profil Nomor"
-        description="Format nomor surat per unit/kepanitiaan — dikelola pusat sebagai kebijakan organisasi. Versi yang sudah aktif immutable; setiap perubahan berarti versi baru."
+        description="Format nomor surat per unit/kepanitiaan — dikelola pusat sebagai kebijakan organisasi. Satu konteks boleh punya beberapa profil aktif (dipilih per surat); versi yang sudah aktif immutable — setiap perubahan berarti versi baru."
       >
         <Button onClick={() => setBuilder({ mode: 'create' })} className="shadow-card">
           <Plus className="w-4 h-4 mr-1.5" /> Profil Baru

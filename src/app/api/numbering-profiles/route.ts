@@ -69,10 +69,18 @@ export async function POST(req: NextRequest) {
       return fail(403, 'FORBIDDEN', 'Anda tidak memiliki wewenang membuat profil untuk konteks ini')
     }
 
-    const dup = await db.numberingProfile.findFirst({
-      where: committeeId ? { committeeId } : { ownerId, committeeId: null },
+    // v1.8: satu konteks (unit/kepanitiaan) boleh memiliki BEBERAPA profil —
+    // pilihan profil ditentukan per surat (selector di form Buat Surat).
+    // Duplikat nama masih dicegah agar daftar profil tidak membingungkan.
+    const dupName = await db.numberingProfile.findFirst({
+      where: committeeId
+        ? { committeeId, name }
+        : { ownerId, committeeId: null, name },
     })
-    if (dup) return fail(409, 'CONFLICT', 'Profil untuk konteks ini sudah ada — buat versi baru alih-alih profil baru')
+    if (dupName) {
+      return fail(409, 'DUPLICATE_NAME',
+        'Sudah ada profil bernama sama untuk konteks ini — gunakan nama lain, atau buat versi baru pada profil tersebut')
+    }
 
     const result = await db.$transaction(async (tx) => {
       const profile = await tx.numberingProfile.create({

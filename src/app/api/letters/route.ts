@@ -8,6 +8,7 @@ import { letterScopeFilter, canAccessUnit, canAccessCommittee } from '@/lib/rbac
 import { DIRECTIONS, LETTER_STATUSES } from '@/lib/constants'
 import { syncLetterReferences, ReferenceInput } from '@/lib/references'
 import { parseDsl } from '@/lib/numbering/dsl'
+import { activeProfileCandidates } from '@/lib/numbering/profile-resolution'
 
 const PAGE_SIZE = 20
 
@@ -76,6 +77,7 @@ const fieldValueSchema = z.record(
 const createSchema = z.object({
   issuingUnitId: z.string().min(1),
   committeeId: z.string().min(1).optional().nullable(),
+  numberingProfileId: z.string().min(1).optional().nullable(), // v1.8: profil pilihan operator (multi-profil per konteks)
   direction: z.enum(DIRECTIONS).optional().nullable(), // LEGACY v1 — kompatibilitas klien lama
   fieldValues: fieldValueSchema.optional().nullable(), // v1.6: pilihan Dropdown operator
   letterTypeId: z.string().min(1),
@@ -122,23 +124,25 @@ export async function POST(req: NextRequest) {
     if (!letterType) return fail(404, 'NOT_FOUND', 'Jenis surat tidak ditemukan')
     if (!letterType.isActive) return fail(409, 'LETTER_TYPE_INACTIVE', 'Jenis surat tidak aktif')
 
-    // E.5: validasi pilihan Dropdown terhadap profil AKTIF konteks ini (bila ada).
-    // Issue tetap melakukan re-validasi — ini pemeriksaan dini yang ramah pengguna.
-    if (body.fieldValues && Object.keys(body.fieldValues).length > 0) {
-      const activeVersion = body.committeeId
-        ? (await db.numberingProfileVersion.findFirst({
-            where: { status: 'ACTIVE', profile: { committeeId: body.committeeId } },
-            orderBy: { version: 'desc' },
-          }))
-          ?? (await db.numberingProfileVersion.findFirst({
-            where: { status: 'ACTIVE', profile: { ownerId: body.issuingUnitId, committeeId: null } },
-            orderBy: { version: 'desc' },
-          }))
-        : await db.numberingProfileVersion.findFirst({
-            where: { status: 'ACTIVE', profile: { ownerId: body.issuingUnitId, committeeId: null } },
-            orderBy: { version: 'desc' },
-          })
-      if (activeVersion) {
+    // v1.8: profil pilihan eksplisit + validasi dini fieldValues (E.5) — kandidat
+    // profil aktif konteks diambil SEKALI (profil panitia konteks / profil unit).
+    let chosenProfileId: string | null = null
+    if (body.numberingProfileId || (body.fieldValues && Object.keys(body.fieldValues).length > 0)) {
+      const candidates = await activeProfileCandidates(db, unit.id, committee?.id ?? null)
+      if (body.numberingProfileId) {
+        const match = candidates.find(c => c.profileId === body.numberingProfileId)
+        if (!match) {
+          return fail(409, 'PROFILE_NOT_ACTIVE',
+            'Profil penomoran yang dipilih tidak aktif / tidak tersedia untuk konteks ini — pilih ulang profil')
+        }
+        chosenProfileId = match.profileId
+      }
+      // E.5: validasi pilihan Dropdown terhadap profil yang dipakai surat ini.
+      // Issue tetap melakukan re-validasi — ini pemeriksaan dini yang ramah pengguna.
+      const activeVersion = chosenProfileId
+        ? candidates.find(c => c.profileId === chosenProfileId)
+        : candidates[0]
+      if (activeVersion && body.fieldValues) {
         const dsl = parseDsl(activeVersion.dsl)
         for (const [key, optionId] of Object.entries(body.fieldValues)) {
           const field = dsl.fields.find(f => f.key === key)
@@ -161,6 +165,7 @@ export async function POST(req: NextRequest) {
         data: {
           issuingUnitId: unit.id,
           committeeId: committee?.id ?? null,
+          numberingProfileId: chosenProfileId, // v1.8: null = resolusi otomatis saat terbit
           direction: body.direction ?? null,
           fieldValues: body.fieldValues && Object.keys(body.fieldValues).length > 0
             ? JSON.stringify(body.fieldValues)
@@ -180,7 +185,7 @@ export async function POST(req: NextRequest) {
       await writeAudit(tx, {
         actorId: r.user.id, action: 'letter.draft.create', entityType: 'letter', entityId: letter.id,
         correlationId: r.correlationId,
-        metadata: { unit: unit.code, committee: committee?.code, fieldValues: body.fieldValues ?? null, letterDate: body.letterDate, references: body.references.length },
+        metadata: { unit: unit.code, committee: committee?.code, profileId: chosenProfileId, fieldValues: body.fieldValues ?? null, letterDate: body.letterDate, references: body.references.length },
       })
       return letter
     })

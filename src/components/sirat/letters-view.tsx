@@ -17,6 +17,7 @@ import { toast } from 'sonner'
 import { Plus, Search, FileDown, ChevronLeft, ChevronRight, FileText, Paperclip, Inbox } from 'lucide-react'
 import { CreateLetterDialog } from './letter-create'
 import { LetterDetail } from './letter-detail'
+import { CopyButton } from './ui-bits'
 
 interface UnitsRes { units: UnitRow[] }
 export interface UnitRow { id: string; code: string; name: string; status: string }
@@ -166,7 +167,20 @@ export function LettersView({ onNavigate }: { onNavigate?: (view: 'profiles') =>
                 >
                   <TableCell className="font-mono text-[12px] font-semibold whitespace-nowrap">
                     {l.officialNumber ?? l.legacyNumber
-                      ? <span>{l.officialNumber ?? l.legacyNumber}</span>
+                      ? (
+                        // v1.7: salin nomor langsung dari daftar — akses copy tanpa
+                        // harus membuka detail; muncul saat hover (desktop) / redup
+                        // namun selalu tersentuh di layar sentuh.
+                        <span className="inline-flex items-center gap-0.5 group/num align-baseline">
+                          <span>{l.officialNumber ?? l.legacyNumber}</span>
+                          <CopyButton
+                            value={(l.officialNumber ?? l.legacyNumber) ?? ''}
+                            label="Salin nomor surat"
+                            iconSize={13}
+                            className="p-1 opacity-60 md:opacity-0 md:group-hover/num:opacity-100 md:focus-visible:opacity-100 transition-opacity"
+                          />
+                        </span>
+                      )
                       : <span className="text-muted-foreground/70 italic">draft — belum bernomor</span>}
                     {l.isImported && <MiniTag tone="gold">{` import`}</MiniTag>}
                   </TableCell>

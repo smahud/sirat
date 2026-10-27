@@ -1,24 +1,25 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, apiGet, apiPatch, apiPost, fmtBytes, fmtDate, fmtDateTime } from '@/lib/client'
-import { StatusBadge, MiniTag, EmptyState } from './ui-bits'
+import { apiGet, apiPatch, apiPost, apiUpload, copyText, fmtBytes, fmtDate, fmtDateTime } from '@/lib/client'
+import { CopyButton, StatusBadge, MiniTag, EmptyState } from './ui-bits'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import {
   Download, FileUp, Trash2, Undo2, Ban, Stamp, Paperclip, FileCheck2,
   Hash, Building2, Users2, CalendarDays, User, AlertTriangle, Link2, GitBranch, Inbox, Pencil,
-  MessageSquareText, StickyNote,
+  MessageSquareText, StickyNote, Camera, FolderOpen, ScanLine, CheckCircle2, Loader2, X, SlidersHorizontal,
 } from 'lucide-react'
-import { DynFieldSpec, PreviewRes, LetterTypeInfo } from './letter-create'
+import { PreviewRes, LetterTypeInfo } from './letter-create'
 
 interface RefRow {
   id: string
@@ -72,6 +73,8 @@ interface LetterDetailData {
     subject: string | null
     notes: string | null
     isImported: boolean
+    letterTypeId?: string | null
+    numberingProfileId?: string | null // v1.8: profil pilihan operator
     issuingUnit: { id: string; code: string; name: string }
     committee?: { id: string; code: string; name: string } | null
     letterType?: { id: string; code: string; name: string } | null
@@ -107,14 +110,43 @@ interface PreviewSpecRes extends PreviewRes {
   missingRequiredLabels?: string[]
 }
 
+/** Task unggah arsip digital (v1.7) — progres per berkas utk antrean multi-upload. */
+interface UploadTask {
+  id: string
+  name: string
+  size: number
+  loaded: number
+  status: 'uploading' | 'done' | 'error'
+  error?: string
+}
+
 export function LetterDetail({ letterId, onClose }: { letterId: string | null; onClose: () => void }) {
   const qc = useQueryClient()
   const [cancelOpen, setCancelOpen] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
   const [editOpen, setEditOpen] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [replaceFileId, setReplaceFileId] = useState<string | null>(null)
   const [uploadLabel, setUploadLabel] = useState<'original' | 'attachment'>('original')
+
+  // ===== Deteksi perangkat (v1.7): HP → menu sumber unggah (kamera/galeri/scan),
+  // PC → langsung file explorer. pointer:coarse = input utama sentuh (HP/tablet);
+  // laptop layar sentuh tetap fine pointer → dianggap PC. =====
+  const [isMobile, setIsMobile] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia('(pointer: coarse)')
+    const update = () => setIsMobile(mq.matches)
+    update()
+    mq.addEventListener('change', update)
+    return () => mq.removeEventListener('change', update)
+  }, [])
+
+  // ===== Antrean unggah arsip digital (v1.7): multi-berkas + progres per berkas.
+  // XHR (apiUpload) satu-satunya cara mendapat progres upload di browser. =====
+  const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([])
+  const [sourceOpen, setSourceOpen] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)   // PC & "Galeri/Berkas" (multi)
+  const cameraInputRef = useRef<HTMLInputElement>(null) // HP: kamera belakang
+  const scanInputRef = useRef<HTMLInputElement>(null)   // HP: pemindai dokumen (PDF)
+  const uploadBusy = uploadTasks.some(t => t.status === 'uploading')
 
   const detail = useQuery({
     queryKey: ['letter', letterId],
@@ -140,7 +172,18 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
       { 'Idempotency-Key': crypto.randomUUID() },
     ),
     onSuccess: (data) => {
-      toast.success(`Nomor resmi diterbitkan: ${data.officialNumber}`)
+      // Aksi "Salin" langsung pada toast — nomor biasanya segera dipakai
+      // menulis surat fisik/digital setelah penerbitan (permintaan pemilik v1.7).
+      toast.success(`Nomor resmi diterbitkan: ${data.officialNumber}`, {
+        duration: 10_000,
+        action: {
+          label: 'Salin',
+          onClick: () => {
+            void copyText(data.officialNumber).then(ok =>
+              ok ? toast.success('Nomor tersalin ke clipboard') : toast.error('Gagal menyalin — salin manual'))
+          },
+        },
+      })
       invalidate()
     },
     onError: (e) => toast.error((e as Error).message),
@@ -157,27 +200,50 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
     onError: (e) => toast.error((e as Error).message),
   })
 
-  const upload = useMutation({
-    mutationFn: async (file: File) => {
-      const headers: Record<string, string> = {
-        'x-file-name': encodeURIComponent(file.name),
-        'x-file-label': uploadLabel,
-        'Content-Type': file.type || 'application/octet-stream',
+  /**
+   * Antrean unggah berurutan (v1.7): satu per satu agar progres jelas dan
+   * server tidak dipanjakan; label kategori berlaku utk semua berkas batch ini.
+   * replaceId → "Versi baru" dari berkas tertentu (selalu satu berkas).
+   */
+  const startUpload = async (files: File[], replaceId?: string) => {
+    if (!letterId || files.length === 0) return
+    const tasks: UploadTask[] = files.map(f => ({
+      id: crypto.randomUUID(), name: f.name, size: f.size, loaded: 0, status: 'uploading',
+    }))
+    setUploadTasks(prev => [...prev, ...tasks])
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i]
+      const t = tasks[i]
+      if (f.size > 25 * 1024 * 1024) {
+        setUploadTasks(prev => prev.map(x => x.id === t.id
+          ? { ...x, status: 'error', error: 'Melebihi batas 25 MiB — padatkan berkas lalu coba lagi' } : x))
+        continue
       }
-      if (replaceFileId) headers['x-replace-file-id'] = replaceFileId
-      return api<{ archiveFileId: string }>(`/api/letters/${letterId}/files`, {
-        method: 'POST',
-        headers,
-        body: file,
-      })
-    },
-    onSuccess: () => {
-      toast.success('Berkas terunggah & tervalidasi')
-      setReplaceFileId(null)
-      invalidate()
-    },
-    onError: (e) => toast.error((e as Error).message),
-  })
+      const headers: Record<string, string> = {
+        'x-file-name': encodeURIComponent(f.name),
+        'x-file-label': uploadLabel,
+        'Content-Type': f.type || 'application/octet-stream',
+      }
+      if (replaceId) headers['x-replace-file-id'] = replaceId
+      try {
+        await apiUpload(`/api/letters/${letterId}/files`, f, headers, (loaded) => {
+          setUploadTasks(prev => prev.map(x => x.id === t.id ? { ...x, loaded } : x))
+        })
+        setUploadTasks(prev => prev.map(x => x.id === t.id ? { ...x, status: 'done', loaded: f.size } : x))
+      } catch (e) {
+        setUploadTasks(prev => prev.map(x => x.id === t.id ? { ...x, status: 'error', error: (e as Error).message } : x))
+      }
+    }
+    invalidate()
+    // Rapikan: task sukses otomatis hilang 5 dtk setelah batch selesai
+    setTimeout(() => setUploadTasks(prev => prev.filter(x => x.status !== 'done')), 5_000)
+  }
+
+  const onPickFiles = (e: React.ChangeEvent<HTMLInputElement>, replaceId?: string) => {
+    const files = Array.from(e.target.files ?? [])
+    if (files.length > 0) void startUpload(files, replaceId)
+    e.target.value = ''
+  }
 
   const trash = useMutation({
     mutationFn: (fileId: string) => apiPost(`/api/archive-files/${fileId}/trash`, { reason: 'Dihapus melalui UI detail surat' }),
@@ -191,14 +257,31 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
   })
 
   const l = detail.data?.letter
+  const heroNumber = l?.officialNumber ?? l?.legacyNumber ?? null
 
   // Spesifikasi field profil aktif utk konteks surat — hanya dimuat saat DRAFT:
   // resolusi label pilihan, deteksi "belum bisa terbit", dan formulir ubah draft.
+  // v1.7: kirim juga data draft (fieldValues/jenis/tanggal) agar API merender
+  // PERKIRAAN NOMOR lengkap — dasar tombol salin sebelum terbit.
+  const draftPreviewParams = useMemo(() => {
+    if (!l) return null
+    const p = new URLSearchParams({ unitId: l.issuingUnit.id })
+    if (l.committee) p.set('committeeId', l.committee.id)
+    if (l.numberingProfileId) p.set('profileId', l.numberingProfileId) // v1.8: profil pilihan draft
+    if (l.letterTypeId) p.set('letterTypeId', l.letterTypeId)
+    if (l.letterDate) p.set('letterDate', l.letterDate.slice(0, 10))
+    try {
+      const fv = l.fieldValues ? JSON.parse(l.fieldValues) as Record<string, string> : {}
+      const filled = Object.fromEntries(Object.entries(fv).filter(([, v]) => v))
+      if (Object.keys(filled).length > 0) p.set('fields', JSON.stringify(filled))
+    } catch { /* fieldValues rusak — kirim tanpa */ }
+    return p.toString()
+  }, [l])
+
   const draftPreview = useQuery({
-    queryKey: ['preview', l?.issuingUnit.id ?? '_', l?.committee?.id ?? 'NONE'],
-    queryFn: () => apiGet<PreviewSpecRes>(
-      `/api/letters/preview?unitId=${l!.issuingUnit.id}${l!.committee ? `&committeeId=${l!.committee.id}` : ''}`),
-    enabled: !!letterId && l?.status === 'DRAFT',
+    queryKey: ['preview', 'draft', l?.id ?? '_', draftPreviewParams ?? ''],
+    queryFn: () => apiGet<PreviewSpecRes>(`/api/letters/preview?${draftPreviewParams}`),
+    enabled: !!letterId && l?.status === 'DRAFT' && !!draftPreviewParams,
     staleTime: 15_000,
   })
 
@@ -218,18 +301,6 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
       })
     } catch { return null }
   }, [l?.fieldValues, draftPreview.data?.fields])
-
-  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file && letterId) {
-      if (file.size > 25 * 1024 * 1024) {
-        toast.error('Berkas melebihi 25 MiB')
-        return
-      }
-      upload.mutate(file)
-    }
-    e.target.value = ''
-  }
 
   return (
     <Dialog open={!!letterId} onOpenChange={(v) => !v && onClose()}>
@@ -260,9 +331,21 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
                       </span>
                     )}
                   </div>
-                  <DialogTitle className="font-mono text-[19px] md:text-[22px] font-bold tracking-tight break-all text-white">
-                    {l.officialNumber ?? l.legacyNumber ?? 'Draft — belum bernomor'}
-                  </DialogTitle>
+                  <div className="flex items-start justify-between gap-2">
+                    <DialogTitle className="font-mono text-[19px] md:text-[22px] font-bold tracking-tight break-all text-white min-w-0">
+                      {heroNumber ?? 'Draft — belum bernomor'}
+                    </DialogTitle>
+                    {heroNumber && (
+                      <CopyButton
+                        value={heroNumber}
+                        label="Salin nomor surat"
+                        toastLabel="Nomor surat tersalin"
+                        tone="onDark"
+                        iconSize={17}
+                        className="shrink-0 -mr-1.5 -mt-1"
+                      />
+                    )}
+                  </div>
                   <DialogDescription className="text-white/65 mt-1.5 text-[12.5px]">
                     {l.issuingUnit.code} — {l.issuingUnit.name}
                     {l.committee ? ` · ${l.committee.code} — ${l.committee.name}` : ''}
@@ -320,6 +403,29 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
                 <p className="text-[12px] text-muted-foreground">
                   Nomor dialokasikan <span className="font-semibold text-foreground">atomik</span> saat tombol ditekan — preview bukan reservasi.
                 </p>
+                {/* Perkiraan nomor utk draft (v1.7): akses copy sebelum terbit —
+                    berguna saat menyusun draf surat fisik/digital di luar sistem. */}
+                {draftPreview.data?.available && draftPreview.data.previewNumber && (
+                  <div
+                    className="w-full flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-lg border border-emerald/20 bg-surface px-3 py-2"
+                    title={draftPreview.data.note ?? undefined}
+                  >
+                    <span className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">Perkiraan nomor</span>
+                    <span className="font-mono text-[13.5px] font-bold text-emerald-deep break-all">
+                      {draftPreview.data.previewNumber}
+                    </span>
+                    <CopyButton
+                      value={draftPreview.data.previewNumber}
+                      label="Salin perkiraan nomor"
+                      toastLabel="Perkiraan nomor tersalin"
+                      iconSize={14}
+                      className="p-1"
+                    />
+                    <span className="ml-auto text-[10.5px] text-muted-foreground">
+                      bisa bergeser bila surat lain terbit lebih dulu
+                    </span>
+                  </div>
+                )}
                 {draftPreview.data && !draftPreview.data.available && (
                   <div className="w-full flex items-start gap-2 rounded-lg border border-gold/40 bg-gold-soft/70 px-3 py-2">
                     <AlertTriangle className="w-3.5 h-3.5 text-gold-dark shrink-0 mt-0.5" />
@@ -362,27 +468,127 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
                         </button>
                       ))}
                     </div>
+                    {/* Input tersembunyi — satu per sumber unggah (v1.7):
+                        - fileInputRef: PC (explorer, multi-berkas) & opsi "Galeri/Berkas" di HP
+                        - cameraInputRef: HP — langsung buka kamera belakang (capture=environment)
+                        - scanInputRef: HP — pemindai dokumen (iOS menawarkan scanner bawaan pada
+                          picker PDF; Android memilih PDF hasil aplikasi pemindai) */}
                     <input
-                      ref={fileInputRef} type="file" className="hidden"
-                      accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx,.txt"
-                      onChange={onPickFile}
+                      ref={fileInputRef} type="file" multiple className="hidden"
+                      accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx,.txt,application/pdf,image/jpeg,image/png,text/plain"
+                      onChange={(e) => onPickFiles(e)}
                     />
-                    <Button size="sm" className="shadow-card h-8" onClick={() => {
-                      setReplaceFileId(null)
-                      fileInputRef.current?.click()
-                    }} disabled={l.status === 'CANCELLED' || upload.isPending}>
-                      <FileUp className="w-4 h-4 mr-1" />
-                      {upload.isPending ? 'Mengunggah…' : 'Unggah'}
-                    </Button>
+                    <input
+                      ref={cameraInputRef} type="file" className="hidden"
+                      accept="image/*" capture="environment"
+                      onChange={(e) => onPickFiles(e)}
+                    />
+                    <input
+                      ref={scanInputRef} type="file" className="hidden"
+                      accept="application/pdf,.pdf"
+                      onChange={(e) => onPickFiles(e)}
+                    />
+                    {isMobile ? (
+                      <Popover open={sourceOpen} onOpenChange={setSourceOpen}>
+                        <PopoverTrigger asChild>
+                          <Button size="sm" className="shadow-card h-8" disabled={l.status === 'CANCELLED'}>
+                            <FileUp className="w-4 h-4 mr-1" />
+                            {uploadBusy ? 'Mengunggah…' : 'Unggah'}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent align="end" className="w-72 p-2" onCloseAutoFocus={(e) => e.preventDefault()}>
+                          <p className="px-2 pt-1 pb-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">Sumber berkas</p>
+                          <button type="button"
+                            className="w-full flex items-center gap-3 rounded-lg px-2.5 py-2.5 hover:bg-emerald-soft/50 active:bg-emerald-soft transition-colors text-left"
+                            onClick={() => { setSourceOpen(false); cameraInputRef.current?.click() }}>
+                            <span className="w-9 h-9 rounded-lg bg-emerald-soft text-emerald flex items-center justify-center shrink-0">
+                              <Camera className="w-4.5 h-4.5 w-[18px] h-[18px]" />
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block text-[13px] font-semibold">Kamera</span>
+                              <span className="block text-[11px] text-muted-foreground leading-snug">Ambil foto dokumen langsung</span>
+                            </span>
+                          </button>
+                          <button type="button"
+                            className="w-full flex items-center gap-3 rounded-lg px-2.5 py-2.5 hover:bg-emerald-soft/50 active:bg-emerald-soft transition-colors text-left"
+                            onClick={() => { setSourceOpen(false); fileInputRef.current?.click() }}>
+                            <span className="w-9 h-9 rounded-lg bg-emerald-soft text-emerald flex items-center justify-center shrink-0">
+                              <FolderOpen className="w-[18px] h-[18px]" />
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block text-[13px] font-semibold">Galeri / Berkas</span>
+                              <span className="block text-[11px] text-muted-foreground leading-snug">Pilih dari perangkat — bisa beberapa sekaligus</span>
+                            </span>
+                          </button>
+                          <button type="button"
+                            className="w-full flex items-center gap-3 rounded-lg px-2.5 py-2.5 hover:bg-emerald-soft/50 active:bg-emerald-soft transition-colors text-left"
+                            onClick={() => { setSourceOpen(false); scanInputRef.current?.click() }}>
+                            <span className="w-9 h-9 rounded-lg bg-emerald-soft text-emerald flex items-center justify-center shrink-0">
+                              <ScanLine className="w-[18px] h-[18px]" />
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block text-[13px] font-semibold">Pindai Dokumen</span>
+                              <span className="block text-[11px] text-muted-foreground leading-snug">Scanner bawaan iOS — di Android: pilih PDF hasil aplikasi pemindai</span>
+                            </span>
+                          </button>
+                        </PopoverContent>
+                      </Popover>
+                    ) : (
+                      <Button size="sm" className="shadow-card h-8" onClick={() => fileInputRef.current?.click()} disabled={l.status === 'CANCELLED'}>
+                        <FileUp className="w-4 h-4 mr-1" />
+                        {uploadBusy ? 'Mengunggah…' : 'Unggah'}
+                      </Button>
+                    )}
                   </div>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                {l.files.length === 0 && (
+                {/* Antrean/progres unggah (v1.7) */}
+                {uploadTasks.length > 0 && (
+                  <div className="space-y-2" aria-live="polite">
+                    {uploadTasks.map((t) => (
+                      <div key={t.id} className="rounded-xl border bg-surface px-3.5 py-2.5 space-y-1.5">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {t.status === 'done'
+                            ? <CheckCircle2 className="w-4 h-4 text-emerald shrink-0" aria-hidden />
+                            : t.status === 'error'
+                              ? <AlertTriangle className="w-4 h-4 text-destructive shrink-0" aria-hidden />
+                              : <Loader2 className="w-4 h-4 text-emerald animate-spin shrink-0" aria-hidden />}
+                          <p className="text-[12.5px] font-medium truncate flex-1 min-w-0">{t.name}</p>
+                          <span className="text-[11px] text-muted-foreground tabular-nums shrink-0">
+                            {t.status === 'done' ? 'Selesai'
+                              : t.status === 'error' ? 'Gagal'
+                                : `${t.size > 0 ? Math.round((t.loaded / t.size) * 100) : 0}% · ${fmtBytes(t.loaded)}/${fmtBytes(t.size)}`}
+                          </span>
+                          {t.status !== 'uploading' && (
+                            <button type="button" aria-label="Tutup status unggah"
+                              className="text-muted-foreground hover:text-foreground shrink-0 p-0.5"
+                              onClick={() => setUploadTasks(prev => prev.filter(x => x.id !== t.id))}>
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        {t.status === 'uploading' && (
+                          <div className="h-1.5 rounded-full bg-muted overflow-hidden" role="progressbar"
+                            aria-valuenow={t.size > 0 ? Math.round((t.loaded / t.size) * 100) : 0} aria-valuemin={0} aria-valuemax={100}>
+                            <div className="h-full bg-emerald transition-all duration-200"
+                              style={{ width: `${t.size > 0 ? Math.min(100, Math.round((t.loaded / t.size) * 100)) : 0}%` }} />
+                          </div>
+                        )}
+                        {t.status === 'error' && (
+                          <p className="text-[11.5px] text-destructive leading-relaxed">{t.error}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {l.files.length === 0 && uploadTasks.length === 0 && (
                   <EmptyState
                     icon={FileUp}
                     title="Belum ada berkas"
-                    description="Unggah PDF/JPEG/PNG/DOCX/XLSX/TXT hingga 25 MiB. Reupload membuat versi baru, bukan menimpa."
+                    description={isMobile
+                      ? 'Unggah dari kamera, galeri, atau pemindai dokumen — PDF/JPEG/PNG/DOCX/XLSX/TXT hingga 25 MiB. Unggah ulang membuat versi baru, bukan menimpa.'
+                      : 'Unggah PDF/JPEG/PNG/DOCX/XLSX/TXT hingga 25 MiB — bisa beberapa berkas sekaligus. Unggah ulang membuat versi baru, bukan menimpa.'}
                   />
                 )}
                 {l.files.map((f) => {
@@ -418,14 +624,7 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
                           <input
                             type="file" className="hidden" id={`replace-${f.id}`}
                             accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx,.txt"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0]
-                              if (file) {
-                                setReplaceFileId(f.id)
-                                setTimeout(() => upload.mutate(file), 0)
-                              }
-                              e.target.value = ''
-                            }}
+                            onChange={(e) => onPickFiles(e, f.id)}
                           />
                           {f.state !== 'TRASHED' && l.status !== 'CANCELLED' && (
                             <Button size="sm" variant="outline" className="h-8 bg-surface" onClick={() => document.getElementById(`replace-${f.id}`)?.click()}>
@@ -501,14 +700,24 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
       </Dialog>
 
       {/* Ubah draft (v1.6.1): koreksi pilihan Dropdown + metadata sebelum terbit.
-          Endpoint PATCH sudah ada sejak v1.6 — kini UI-nya tersedia juga. */}
+          v1.8: dialog memuat spesifikasi profilnya sendiri (mengikuti profil yang
+          dipilih) sehingga profil bisa DIGANTI di dalam dialog. */}
       {l?.status === 'DRAFT' && (
         <EditDraftDialog
           open={editOpen}
-          letter={l}
-          fieldsSpec={draftPreview.data?.fields ?? []}
-          specUnavailable={!!draftPreview.data && !draftPreview.data.available}
-          specLoading={draftPreview.isLoading}
+          letter={{
+            id: l.id,
+            fieldValues: l.fieldValues,
+            letterDate: l.letterDate,
+            recipient: l.recipient,
+            subject: l.subject,
+            notes: l.notes,
+            letterTypeId: l.letterTypeId,
+            letterType: l.letterType,
+            unitId: l.issuingUnit.id,
+            committeeId: l.committee?.id ?? null,
+            numberingProfileId: l.numberingProfileId ?? null,
+          }}
           onClose={() => setEditOpen(false)}
           onSaved={() => { invalidate(); qc.invalidateQueries({ queryKey: ['preview'] }) }}
         />
@@ -697,20 +906,21 @@ interface EditableLetter {
   notes: string | null
   letterTypeId?: string | null
   letterType?: { id: string; code: string; name: string } | null
+  unitId: string
+  committeeId: string | null
+  numberingProfileId: string | null
 }
 
 /**
  * Dialog koreksi draft sebelum terbit: pilihan Dropdown dinamis (dari profil
- * aktif), tanggal surat, jenis surat, penerima, perihal, dan catatan.
+ * yang dipilih surat — v1.8 bisa diganti langsung di sini), tanggal surat,
+ * jenis surat, penerima, perihal, dan catatan.
  * Backend (PATCH /api/letters/[id]) menerima seluruh field ini untuk DRAFT dan
  * menolak perubahan komponen nomor setelah surat terbit (IMMUTABLE_COMPONENT).
  */
-function EditDraftDialog({ open, letter, fieldsSpec, specUnavailable, specLoading, onClose, onSaved }: {
+function EditDraftDialog({ open, letter, onClose, onSaved }: {
   open: boolean
   letter: EditableLetter
-  fieldsSpec: DynFieldSpec[]
-  specUnavailable: boolean
-  specLoading: boolean
   onClose: () => void
   onSaved: () => void
 }) {
@@ -723,6 +933,7 @@ function EditDraftDialog({ open, letter, fieldsSpec, specUnavailable, specLoadin
   }, [letter.fieldValues])
 
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({})
+  const [profileId, setProfileId] = useState('') // v1.8: '' = resolusi otomatis (default konteks)
   const [letterDate, setLetterDate] = useState('')
   const [letterTypeId, setLetterTypeId] = useState('')
   const [recipient, setRecipient] = useState('')
@@ -734,6 +945,7 @@ function EditDraftDialog({ open, letter, fieldsSpec, specUnavailable, specLoadin
   if (open && !lastOpen) {
     setLastOpen(true)
     setFieldValues(stored)
+    setProfileId(letter.numberingProfileId ?? '')
     setLetterDate(letter.letterDate ? letter.letterDate.slice(0, 10) : '')
     setLetterTypeId(letter.letterTypeId ?? letter.letterType?.id ?? '')
     setRecipient(letter.recipient ?? '')
@@ -741,6 +953,37 @@ function EditDraftDialog({ open, letter, fieldsSpec, specUnavailable, specLoadin
     setNotes(letter.notes ?? '')
   }
   if (!open && lastOpen) setLastOpen(false)
+
+  // Spesifikasi field mengikuti profil yang dipilih (ganti profil → field baru)
+  const editPreviewParams = useMemo(() => {
+    const p = new URLSearchParams({ unitId: letter.unitId })
+    if (letter.committeeId) p.set('committeeId', letter.committeeId)
+    if (profileId) p.set('profileId', profileId)
+    if (letterTypeId) p.set('letterTypeId', letterTypeId)
+    if (letterDate) p.set('letterDate', letterDate)
+    const filled = Object.fromEntries(Object.entries(fieldValues).filter(([, v]) => v))
+    if (Object.keys(filled).length > 0) p.set('fields', JSON.stringify(filled))
+    return p.toString()
+  }, [letter.unitId, letter.committeeId, profileId, letterTypeId, letterDate, fieldValues])
+
+  const editPreview = useQuery({
+    queryKey: ['preview', 'edit', letter.id, editPreviewParams],
+    queryFn: () => apiGet<PreviewSpecRes>(`/api/letters/preview?${editPreviewParams}`),
+    enabled: open,
+    staleTime: 10_000,
+  })
+  const fieldsSpec = editPreview.data?.fields ?? []
+  const specUnavailable = !!editPreview.data && !editPreview.data.available
+  const specLoading = editPreview.isLoading
+  const profileOptions = editPreview.data?.profiles ?? []
+
+  // Ganti profil → pilihan Dropdown profil lama tak berlaku — reset
+  const [lastSpecProfile, setLastSpecProfile] = useState('')
+  const specProfile = editPreview.data?.profileId ?? ''
+  if (specProfile && specProfile !== lastSpecProfile) {
+    setLastSpecProfile(specProfile)
+    if (Object.keys(fieldValues).length > 0) setFieldValues({})
+  }
 
   const letterTypes = useQuery({
     queryKey: ['letter-types'],
@@ -754,6 +997,7 @@ function EditDraftDialog({ open, letter, fieldsSpec, specUnavailable, specLoadin
 
   const save = useMutation({
     mutationFn: () => apiPatch(`/api/letters/${letter.id}`, {
+      numberingProfileId: profileId || null, // v1.8: profil pilihan (null = otomatis)
       fieldValues: Object.fromEntries(Object.entries(fieldValues).filter(([, v]) => v)),
       letterDate,
       letterTypeId,
@@ -794,7 +1038,35 @@ function EditDraftDialog({ open, letter, fieldsSpec, specUnavailable, specLoadin
             </div>
           )}
 
-          {/* Field formulir dinamis dari profil aktif */}
+          {/* v1.8: ganti profil penomoran draft (konteks multi-profil) */}
+          {profileOptions.length > 1 && (
+            <div className="space-y-1.5">
+              <Label className="text-[12px] font-semibold flex items-center gap-1.5">
+                <SlidersHorizontal className="w-3.5 h-3.5 text-muted-foreground" /> Profil penomoran
+                <span className="text-[10.5px] font-normal text-muted-foreground">(format nomor surat)</span>
+              </Label>
+              <Select
+                value={profileId || editPreview.data?.profileId || ''}
+                onValueChange={(v) => setProfileId(v)}
+              >
+                <SelectTrigger className="bg-surface">
+                  <SelectValue placeholder="Pilih profil" />
+                </SelectTrigger>
+                <SelectContent>
+                  {profileOptions.map(p => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}{p.scope === 'committee' ? ' (kepanitiaan)' : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10.5px] text-muted-foreground">
+                Ganti profil akan mengosongkan pilihan field lama — isi ulang sesuai format baru.
+              </p>
+            </div>
+          )}
+
+          {/* Field formulir dinamis dari profil yang dipilih */}
           {fieldsSpec.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {fieldsSpec.map((f) => (

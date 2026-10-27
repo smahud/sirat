@@ -1,0 +1,65 @@
+{
+  "$comment": "Profil penomoran CONTOH (v1.7) — demonstrasi fitur DSL v2: dua dropdown yang masuk nomor (Arah Surat + Klasifikasi) dan satu field metadata (Sifat Surat). Dipakai scripts/create-example-profile.mjs, scripts/seed.mjs, dan tests/example-profile.test.ts. Contoh hasil: 001/A/N/UND/MI/X/2026",
+  "name": "Contoh Profil — Arah & Klasifikasi",
+  "unitCode": "MI",
+  "dsl": {
+    "version": 2,
+    "separator": "/",
+    "fields": [
+      {
+        "type": "dropdown",
+        "key": "arah_surat",
+        "label": "Arah Surat",
+        "placeholder": "Pilih arah",
+        "helperText": "Internal = surat di lingkungan YAPSI; Eksternal = keluar YAPSI",
+        "options": [
+          { "id": "internal", "label": "Internal", "code": "A", "active": true },
+          { "id": "eksternal", "label": "Eksternal", "code": "B", "active": true }
+        ],
+        "defaultOptionId": null,
+        "required": true,
+        "order": 0
+      },
+      {
+        "type": "dropdown",
+        "key": "klasifikasi",
+        "label": "Klasifikasi",
+        "placeholder": "Pilih klasifikasi",
+        "helperText": null,
+        "options": [
+          { "id": "biasa", "label": "Biasa", "code": "N", "active": true },
+          { "id": "rahasia", "label": "Rahasia", "code": "R", "active": true },
+          { "id": "sangat_rahasia", "label": "Sangat Rahasia", "code": "SR", "active": true }
+        ],
+        "defaultOptionId": "biasa",
+        "required": true,
+        "order": 1
+      },
+      {
+        "type": "dropdown",
+        "key": "sifat_surat",
+        "label": "Sifat Surat",
+        "placeholder": "Pilih sifat",
+        "helperText": "Contoh field metadata — tidak masuk nomor, hanya tercatat pada data surat",
+        "options": [
+          { "id": "biasa", "label": "Biasa", "code": "XB", "active": true },
+          { "id": "penting", "label": "Penting", "code": "XP", "active": true },
+          { "id": "segera", "label": "Segera", "code": "XS", "active": true }
+        ],
+        "defaultOptionId": "biasa",
+        "required": false,
+        "order": 2
+      }
+    ],
+    "components": [
+      { "type": "sequence", "padding": 3 },
+      { "type": "fieldRef", "field": "arah_surat" },
+      { "type": "fieldRef", "field": "klasifikasi" },
+      { "type": "letterTypeCode" },
+      { "type": "unitCode" },
+      { "type": "letterDate", "format": "MONTH_ROMAN" },
+      { "type": "letterDate", "format": "YEAR_4" }
+    ],
+    "policy": { "resetPolicy": "YEARLY", "dateSource": "LETTER_DATE" }
+  }
+}

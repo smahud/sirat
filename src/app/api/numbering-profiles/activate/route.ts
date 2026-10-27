@@ -60,19 +60,20 @@ export async function POST(req: NextRequest) {
     }
 
     const profile = version.profile
-    const contextFilter = profile.committeeId
-      ? { committeeId: profile.committeeId }
-      : { ownerId: profile.ownerId, committeeId: null }
 
     const result = await db.$transaction(async (tx) => {
+      // v1.8: pensiunkan versi aktif LAMA HANYA pada profil yang sama — profil lain
+      // utk konteks yang sama boleh tetap aktif (multi-profil per unit/kepanitiaan;
+      // satu profil tetap maksimal satu versi aktif).
+      const sameProfileFilter = { profileId: version.profileId }
       if (retireExisting) {
         await tx.numberingProfileVersion.updateMany({
-          where: { status: 'ACTIVE', profile: contextFilter },
+          where: { status: 'ACTIVE', ...sameProfileFilter },
           data: { status: 'RETIRED' },
         })
       } else {
         const activeCount = await tx.numberingProfileVersion.count({
-          where: { status: 'ACTIVE', profile: contextFilter },
+          where: { status: 'ACTIVE', ...sameProfileFilter },
         })
         if (activeCount > 0) {
           return { ambiguous: true as const }
@@ -89,7 +90,7 @@ export async function POST(req: NextRequest) {
       } else {
         nsWhere = { unitId: profile.ownerId, committeeId: null }
       }
-      let ns = await tx.counterNamespace.findFirst({ where: nsWhere })
+      let ns = await tx.counterNamespace.findFirst({ where: nsWhere, orderBy: { createdAt: 'desc' } })
       if (!ns) {
         ns = await tx.counterNamespace.create({
           data: {

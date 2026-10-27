@@ -474,3 +474,32 @@ npx prisma migrate deploy
 Baseline `0_init` menandai skema pra-v1.3 (sudah di-resolve applied pada deployment
 v1.3); `20261026_v1_3_master_continuation` menambahkan kolom keterangan, tabel
 LetterReference/BackupGrant/BackupEvent.
+
+## v1.7 — Salin nomor, arsip digital adaptif perangkat, profil contoh (2026-10-27)
+
+**Tombol salin nomor surat** (permintaan pemilik — akses copy di semua posisi yang dibutuhkan):
+
+- Formulir **Buat Surat Baru**: panel "Perkiraan nomor" → tombol salin (nomor lazim dipakai di naskah surat fisik/digital sebelum terbit).
+- **Detail surat DRAFT**: baris "PERKIRAAN NOMOR" + tombol salin (memakai data draft: fieldValues/jenis/tanggal).
+- **Detail surat terbit**: tombol salin di samping nomor pada hero; toast penerbitan punya aksi **"Salin"**.
+- **Daftar Surat**: ikon salin per baris (muncul saat hover di desktop, selalu tampak redup di layar sentuh).
+- Fallback clipboard legacy (textarea + execCommand) → tetap berfungsi di intranet HTTP.
+
+**Arsip digital adaptif perangkat** (`letter-detail`):
+
+- **PC** (pointer halus): tombol Unggah membuka file explorer langsung, **multi-berkas**.
+- **HP** (pointer coarse): tombol Unggah membuka menu **Sumber berkas** —
+  📷 Kamera (`capture="environment"`, langsung kamera belakang),
+  📁 Galeri/Berkas (multi-berkas),
+  📄 Pindai Dokumen (picker PDF — iOS menawarkan scanner bawaan; Android memilih PDF hasil aplikasi pemindai).
+- **Antrean unggah berurutan** dengan **progres per berkas** (XHR `apiUpload`), status Selesai/Gagal + pesan error, auto-clear 5 dtk. Label kategori Asli/Lampiran berlaku per batch; "Versi baru" tetap satu berkas.
+
+**Profil penomoran CONTOH** (DRAFT, unit MI — `scripts/example-numbering-profile.json`):
+
+- `001/A/N/UND/MI/X/2026` — 2 dropdown dalam nomor (Arah Surat, Klasifikasi) + 1 field metadata (Sifat Surat).
+- Dibuat oleh seed (instalasi baru) atau `node scripts/create-example-profile.mjs` (instalasi berjalan). Idempoten.
+- Validasi penuh diuji: `tests/example-profile.test.ts` (schema, aktivasi, render, mapping kode).
+
+**Pembersihan surat uji** (permintaan pemilik — bebaskan nomor 001):
+
+- `node scripts/delete-test-letter.mjs ["NOMOR"] [--force]` — hard-delete surat uji DRAFT/CANCELLED + registry + reset counter periode + catat audit `letter.purge`. Guard: ISSUED butuh `--force`.
