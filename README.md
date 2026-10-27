@@ -165,12 +165,15 @@ sirat/
 │
 ├── tests/                         ← vitest unit tests (23 cases)
 ├── docs/                          ← dokumentasi teknis
+│   ├── PRD-PENYIMPANAN-EKSTERNAL-v2.md ← PRD storage v2.0 (cache + offload multi-backend)
 │   ├── ADR.md                     ← 10 Architecture Decision Records
 │   ├── ERD.md                     ← Entity Relationship Diagram
 │   ├── RUNBOOK.md                 ← install/upgrade/backup/restore/runbook
 │   ├── PERMISSION-MATRIX.md       ← RBAC detail matrix
 │   ├── OPENAPI.yaml               ← OpenAPI 3.1 spec
-│   └── AUDIT-REPORT.md            ← security audit report
+│   ├── AUDIT-REPORT.md            ← security audit report
+│   └── images/                    ← aset gambar dokumentasi
+│       └── arsitektur-storage.png ← diagram arsitektur PRD storage v2.0
 │
 ├── public/                        ← static assets
 │
@@ -704,6 +707,8 @@ ls -la /var/lib/sirat/staging
 | Permission Matrix | `docs/PERMISSION-MATRIX.md` | Detail RBAC per role × resource × action |
 | OpenAPI Spec | `docs/OPENAPI.yaml` | OpenAPI 3.1 untuk semua 26 endpoints |
 | Security Audit Report | `docs/AUDIT-REPORT.md` | Hasil audit keamanan internal |
+| PRD Penyimpanan Eksternal v2.0 | `docs/PRD-PENYIMPANAN-EKSTERNAL-v2.md` | PRD evolusi storage: cache internal + offload otomatis ke 9 backend (FTP/FTPS/SFTP/SMB/WebDAV/Dropbox/Google Drive/OneDrive/S3), 15 bab, 18 FR baru, roadmap 3 fase — status: draf menunggu persetujuan (Lampiran D) |
+| PRD Penyimpanan (format formal) | `docs/PRD-PENYIMPANAN-EKSTERNAL-v2.docx` | Versi formal PRD storage (41 halaman); diagram: `docs/images/arsitektur-storage.png` |
 | Status Deploy Produksi | `DEPLOYED.md` | Snapshot terakhir konfigurasi produksi |
 
 ---
