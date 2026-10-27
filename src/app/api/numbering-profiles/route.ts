@@ -4,7 +4,8 @@ import { db } from '@/lib/db'
 import { ok, fail, handle, guardMutation, readJson } from '@/lib/api-helpers'
 import { requirePermission } from '@/lib/api-helpers'
 import { writeAudit } from '@/lib/audit'
-import { dslSchema } from '@/lib/numbering/dsl'
+import { dslInputSchema, dslSchema } from '@/lib/numbering/dsl'
+import { validateDslForActivation } from '@/lib/numbering/validate'
 import { canManageUnit, canManageCommittee } from '@/lib/rbac'
 
 /**
@@ -33,7 +34,7 @@ const createSchema = z.object({
   name: z.string().trim().min(1).max(120),
   ownerId: z.string().min(1),           // unit pemilik
   committeeId: z.string().optional().nullable(), // terisi = profil khusus panitia
-  dsl: dslSchema,
+  dsl: dslInputSchema, // v2 langsung; v1 (legacy) di-upgrade transparan — disimpan selalu v2
 })
 
 export async function POST(req: NextRequest) {
@@ -45,7 +46,15 @@ export async function POST(req: NextRequest) {
 
     const parsed = createSchema.safeParse(await readJson(req))
     if (!parsed.success) return fail(400, 'VALIDATION', 'Profil tidak valid', { issues: parsed.error.issues })
-    const { name, ownerId, committeeId, dsl } = parsed.data
+    const { name, ownerId, committeeId } = parsed.data
+    const dsl = dslSchema.parse(parsed.data.dsl) // hasil input selalu v2 ternormalisasi
+
+    // Validasi domain DSL (E.3): duplikasi key/kode, label/kode kosong, karakter terlarang,
+    // referensi fieldRef, default sah — tolak lebih awal dengan pesan jelas (F.7).
+    const validation = validateDslForActivation(dsl)
+    if (!validation.ok) {
+      return fail(400, 'INVALID_PROFILE', 'Konfigurasi profil tidak valid', { errors: validation.errors })
+    }
 
     const unit = await db.unit.findUnique({ where: { id: ownerId } })
     if (!unit) return fail(404, 'NOT_FOUND', 'Unit tidak ditemukan')
@@ -65,26 +74,27 @@ export async function POST(req: NextRequest) {
     })
     if (dup) return fail(409, 'CONFLICT', 'Profil untuk konteks ini sudah ada — buat versi baru alih-alih profil baru')
 
-    const profile = await db.$transaction(async (tx) => {
+    const result = await db.$transaction(async (tx) => {
       const profile = await tx.numberingProfile.create({
         data: { name, ownerId, committeeId: committeeId ?? null },
       })
-      await tx.numberingProfileVersion.create({
+      const version = await tx.numberingProfileVersion.create({
         data: { profileId: profile.id, version: 1, status: 'DRAFT', dsl: JSON.stringify(dsl) },
       })
       await writeAudit(tx, {
         actorId: r.user.id, action: 'profile.create', entityType: 'numberingProfile', entityId: profile.id,
         correlationId: r.correlationId, metadata: { name, unit: unit.code, committeeId },
       })
-      return profile
+      return { profile, version }
     })
-    return ok({ profile }, 201)
+    // v1.6: version ikut dikembalikan agar builder bisa langsung menawarkan aktivasi
+    return ok({ profile: result.profile, version: result.version }, 201)
   })
 }
 
 const saveVersionSchema = z.object({
   profileId: z.string().min(1),
-  dsl: dslSchema,
+  dsl: dslInputSchema, // v2 langsung; v1 di-upgrade transparan
   mode: z.enum(['draft', 'new']).default('draft'),
 })
 
@@ -105,7 +115,14 @@ export async function PUT(req: NextRequest) {
 
     const parsed = saveVersionSchema.safeParse(await readJson(req))
     if (!parsed.success) return fail(400, 'VALIDATION', 'Data tidak valid', { issues: parsed.error.issues })
-    const { profileId, dsl, mode } = parsed.data
+    const { profileId, mode } = parsed.data
+    const dsl = dslSchema.parse(parsed.data.dsl) // selalu v2 ternormalisasi
+
+    // Validasi domain DSL sebelum menyimpan (E.3/F.7)
+    const validation = validateDslForActivation(dsl)
+    if (!validation.ok) {
+      return fail(400, 'INVALID_PROFILE', 'Konfigurasi profil tidak valid', { errors: validation.errors })
+    }
 
     const profile = await db.numberingProfile.findUnique({
       where: { id: profileId },

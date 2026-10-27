@@ -233,7 +233,8 @@ model Letter {
   profileVersionId String?
   profileVersion  NumberingProfileVersion? @relation("LetterProfile", fields: [profileVersionId], references: [id])
   numberSnapshot  String? // JSON: komponen, input, kode saat terbit
-  direction       String? // INTERNAL|EXTERNAL
+  direction       String? // LEGACY v1 (INTERNAL|EXTERNAL) — beku utk histori; surat baru memakai fieldValues
+  fieldValues     String? // JSON v1.6: { [fieldKey]: optionId } — pilihan Dropdown operator
   letterTypeId    String?
   letterType      LetterType? @relation("LetterType", fields: [letterTypeId], references: [id])
   committee       Committee? @relation("LetterCommittee", fields: [committeeId], references: [id])

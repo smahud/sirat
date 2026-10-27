@@ -5,20 +5,38 @@ import { ok, fail, handle } from '@/lib/api-helpers'
 import { requireUser } from '@/lib/api-helpers'
 import { canAccessUnit, canAccessCommittee } from '@/lib/rbac'
 import { parseDsl } from '@/lib/numbering/dsl'
-import { renderNumber, requiredInputs } from '@/lib/numbering/render'
+import { renderNumber, requiredInputs, formFields } from '@/lib/numbering/render'
+import { resolveFieldValuesForPreview, unresolvedNumberFields } from '@/lib/numbering/fields'
 import { periodKeyFor } from '@/lib/numbering/validate'
 
 const querySchema = z.object({
   unitId: z.string().min(1),
   committeeId: z.string().optional(),
-  direction: z.enum(['INTERNAL', 'EXTERNAL']).optional(),
+  direction: z.enum(['INTERNAL', 'EXTERNAL']).optional(), // LEGACY v1 (draft lama)
+  fields: z.string().optional(), // JSON { fieldKey: optionId } — pilihan Dropdown operator (v1.6)
   letterTypeId: z.string().optional(),
   letterDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 })
 
+function parseFieldsParam(raw: string | undefined): Record<string, string> | undefined {
+  if (!raw) return undefined
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const out: Record<string, string> = {}
+      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof v === 'string' && v) out[k] = v
+      }
+      return out
+    }
+  } catch { /* parameter tidak valid → perlakukan kosong */ }
+  return undefined
+}
+
 /**
  * GET /api/letters/preview — FR-009: preview BUKAN nomor resmi, tidak reservasi.
- * Menampilkan perkiraan + penjelasan komponen + validasi field yang belum lengkap.
+ * v1.6: mengembalikan `fields` (spesifikasi formulir Dropdown dari profil aktif)
+ * agar FE operator merender form dinamis; preview memakai pilihan operator.
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
@@ -29,6 +47,7 @@ export async function GET(req: NextRequest) {
     const parsed = querySchema.safeParse(Object.fromEntries(url.searchParams.entries()))
     if (!parsed.success) return fail(400, 'VALIDATION', 'Parameter tidak valid', { issues: parsed.error.issues })
     const { unitId, committeeId, direction, letterTypeId, letterDate } = parsed.data
+    const fieldValues = parseFieldsParam(url.searchParams.get('fields') ?? undefined)
 
     const unit = await db.unit.findUnique({ where: { id: unitId } })
     if (!unit) return fail(404, 'NOT_FOUND', 'Unit tidak ditemukan')
@@ -59,6 +78,9 @@ export async function GET(req: NextRequest) {
     }
     const dsl = parseDsl(activeVersion.dsl)
 
+    // Spesifikasi formulir dinamis — FE merender Dropdown dari sini (B.2/C)
+    const fieldsSpec = formFields(dsl)
+
     // Namespace efektif untuk estimasi counter
     const ns = committee
       ? (committee.shareParentCounter
@@ -68,8 +90,13 @@ export async function GET(req: NextRequest) {
 
     const lt = letterTypeId ? await db.letterType.findUnique({ where: { id: letterTypeId } }) : null
 
+    // Resolusi nilai field (longgar — field wajib kosong dilaporkan, bukan error)
+    const { values: resolvedFields, missingRequired } = resolveFieldValuesForPreview(
+      dsl, fieldValues, direction ?? null,
+    )
+
     const ctx = {
-      direction,
+      fieldValues: Object.fromEntries(Object.entries(resolvedFields).map(([k, v]) => [k, v.optionId])),
       letterTypeCode: lt?.code,
       unitCode: unit.code,
       committeeCode: committee?.code,
@@ -99,18 +126,28 @@ export async function GET(req: NextRequest) {
         isEstimate: true,
         note: 'Perkiraan nomor — bukan reservasi. Nomor resmi hanya dialokasikan saat penerbitan berhasil.',
         parts: rendered.parts,
+        fields: fieldsSpec,
         requiredInputs: requiredInputs(dsl),
-        missingInputs: rendered.parts.filter(p => p.value.includes('#')).length > 0 ? ['sequence'] : [],
+        missingInputs: [
+          ...(letterTypeId ? [] : ['letterTypeId']),
+          ...(letterDate ? [] : ['letterDate']),
+          ...unresolvedNumberFields(dsl, resolvedFields).map(l => `field:${l}`),
+        ],
+        missingRequiredLabels: missingRequired,
       })
     } catch (e) {
       return ok({
         available: true,
         error: (e as Error).message,
+        fields: fieldsSpec,
         requiredInputs: requiredInputs(dsl),
-        missingInputs: requiredInputs(dsl).filter(f =>
-          (f === 'direction' && !direction) ||
-          (f === 'letterTypeId' && !letterTypeId) ||
-          (f === 'letterDate' && !letterDate)),
+        missingInputs: [
+          ...(letterTypeId ? [] : ['letterTypeId']),
+          ...(letterDate ? [] : ['letterDate']),
+          ...unresolvedNumberFields(dsl, resolvedFields).map(l => `field:${l}`),
+          ...missingRequired.map(l => `field:${l}`),
+        ],
+        missingRequiredLabels: missingRequired,
       })
     }
   })

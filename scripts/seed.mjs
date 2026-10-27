@@ -18,12 +18,30 @@ const DEFAULTS = JSON.parse(
   readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'letter-types-defaults.json'), 'utf8'),
 )
 
+// Preset DSL v2 (Dynamic Numbering Profile Builder, v1.6):
+// arah surat kini Dropdown generik — operator memilih label, nomor memakai kode.
 const PRESET_DSL = {
-  version: 1,
+  version: 2,
   separator: '/',
+  fields: [
+    {
+      type: 'dropdown',
+      key: 'arah_surat',
+      label: 'Arah Surat',
+      placeholder: 'Pilih arah',
+      helperText: null,
+      options: [
+        { id: 'internal', label: 'Internal', code: 'A', active: true },
+        { id: 'eksternal', label: 'Eksternal', code: 'B', active: true },
+      ],
+      defaultOptionId: null,
+      required: true,
+      order: 0,
+    },
+  ],
   components: [
     { type: 'sequence', padding: 3 },
-    { type: 'direction', mapping: { INTERNAL: 'A', EXTERNAL: 'B' } },
+    { type: 'fieldRef', field: 'arah_surat' },
     { type: 'letterTypeCode' },
     { type: 'literal', value: 'YAPSI-DS' },
     { type: 'letterDate', format: 'MONTH_ROMAN' },

@@ -7,6 +7,7 @@ import { writeAudit } from '@/lib/audit'
 import { letterScopeFilter, canAccessUnit, canAccessCommittee } from '@/lib/rbac'
 import { DIRECTIONS, LETTER_STATUSES } from '@/lib/constants'
 import { syncLetterReferences, ReferenceInput } from '@/lib/references'
+import { parseDsl } from '@/lib/numbering/dsl'
 
 const PAGE_SIZE = 20
 
@@ -67,10 +68,16 @@ const referenceSchema = z.object({
   refNumberText: z.string().trim().min(1).max(240),
 })
 
+const fieldValueSchema = z.record(
+  z.string().regex(/^[a-z][a-z0-9_]{1,31}$/), // fieldKey
+  z.string().min(1).max(64),                    // optionId
+)
+
 const createSchema = z.object({
   issuingUnitId: z.string().min(1),
   committeeId: z.string().min(1).optional().nullable(),
-  direction: z.enum(DIRECTIONS),
+  direction: z.enum(DIRECTIONS).optional().nullable(), // LEGACY v1 — kompatibilitas klien lama
+  fieldValues: fieldValueSchema.optional().nullable(), // v1.6: pilihan Dropdown operator
   letterTypeId: z.string().min(1),
   letterDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   recipient: z.string().trim().max(240).optional().nullable(),
@@ -115,12 +122,49 @@ export async function POST(req: NextRequest) {
     if (!letterType) return fail(404, 'NOT_FOUND', 'Jenis surat tidak ditemukan')
     if (!letterType.isActive) return fail(409, 'LETTER_TYPE_INACTIVE', 'Jenis surat tidak aktif')
 
+    // E.5: validasi pilihan Dropdown terhadap profil AKTIF konteks ini (bila ada).
+    // Issue tetap melakukan re-validasi — ini pemeriksaan dini yang ramah pengguna.
+    if (body.fieldValues && Object.keys(body.fieldValues).length > 0) {
+      const activeVersion = body.committeeId
+        ? (await db.numberingProfileVersion.findFirst({
+            where: { status: 'ACTIVE', profile: { committeeId: body.committeeId } },
+            orderBy: { version: 'desc' },
+          }))
+          ?? (await db.numberingProfileVersion.findFirst({
+            where: { status: 'ACTIVE', profile: { ownerId: body.issuingUnitId, committeeId: null } },
+            orderBy: { version: 'desc' },
+          }))
+        : await db.numberingProfileVersion.findFirst({
+            where: { status: 'ACTIVE', profile: { ownerId: body.issuingUnitId, committeeId: null } },
+            orderBy: { version: 'desc' },
+          })
+      if (activeVersion) {
+        const dsl = parseDsl(activeVersion.dsl)
+        for (const [key, optionId] of Object.entries(body.fieldValues)) {
+          const field = dsl.fields.find(f => f.key === key)
+          if (!field) continue // kunci tak dikenal diabaikan (profil boleh berganti)
+          const opt = field.options.find(o => o.id === optionId)
+          if (!opt) {
+            return fail(400, 'FIELD_UNKNOWN_OPTION',
+              `Pilihan pada "${field.label}" tidak dikenal oleh profil aktif — muat ulang formulir dan pilih ulang`)
+          }
+          if (!opt.active) {
+            return fail(400, 'FIELD_INACTIVE_OPTION',
+              `Pilihan "${opt.label}" pada "${field.label}" sudah tidak aktif — pilih nilai lain`)
+          }
+        }
+      }
+    }
+
     const letter = await db.$transaction(async (tx) => {
       const letter = await tx.letter.create({
         data: {
           issuingUnitId: unit.id,
           committeeId: committee?.id ?? null,
-          direction: body.direction,
+          direction: body.direction ?? null,
+          fieldValues: body.fieldValues && Object.keys(body.fieldValues).length > 0
+            ? JSON.stringify(body.fieldValues)
+            : null,
           letterTypeId: body.letterTypeId,
           letterDate: new Date(`${body.letterDate}T00:00:00.000Z`),
           recipient: body.recipient || null,
@@ -136,7 +180,7 @@ export async function POST(req: NextRequest) {
       await writeAudit(tx, {
         actorId: r.user.id, action: 'letter.draft.create', entityType: 'letter', entityId: letter.id,
         correlationId: r.correlationId,
-        metadata: { unit: unit.code, committee: committee?.code, direction: body.direction, letterDate: body.letterDate, references: body.references.length },
+        metadata: { unit: unit.code, committee: committee?.code, fieldValues: body.fieldValues ?? null, letterDate: body.letterDate, references: body.references.length },
       })
       return letter
     })

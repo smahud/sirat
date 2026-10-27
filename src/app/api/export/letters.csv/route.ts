@@ -6,6 +6,27 @@ import { writeAudit } from '@/lib/audit'
 import { letterScopeFilter } from '@/lib/rbac'
 import { csvCell } from '@/lib/constants'
 
+/**
+ * Kolom "Arah/Atribut" (v1.6): label Dropdown dari snapshot penerbitan →
+ * fallback direction legacy (surat lama/import) → kunci fieldValues (draft).
+ */
+function atributSurat(l: { numberSnapshot: string | null; fieldValues: string | null; direction: string | null }): string {
+  try {
+    const fv = JSON.parse(l.numberSnapshot ?? 'null')?.inputs?.fieldValues as Record<string, { label?: string }> | undefined
+    if (fv && Object.keys(fv).length > 0) {
+      return Object.values(fv).map(v => v?.label ?? '').filter(Boolean).join('; ')
+    }
+  } catch { /* snapshot rusak → fallback */ }
+  if (l.direction) return l.direction === 'INTERNAL' ? 'Internal' : l.direction === 'EXTERNAL' ? 'Eksternal' : l.direction
+  try {
+    const fv = JSON.parse(l.fieldValues ?? 'null')
+    if (fv && typeof fv === 'object' && Object.keys(fv).length > 0) {
+      return Object.entries(fv).map(([k, v]) => `${k}=${v}`).join('; ')
+    }
+  } catch { /* abaikan */ }
+  return ''
+}
+
 /** GET /api/export/letters.csv — FR-025: export menghormati scope permission. */
 export async function GET(req: NextRequest) {
   return handle(async () => {
@@ -33,14 +54,14 @@ export async function GET(req: NextRequest) {
       orderBy: [{ letterDate: 'asc' }, { createdAt: 'asc' }],
     })
 
-    const header = ['Nomor Resmi', 'Tanggal Surat', 'Unit', 'Kepanitiaan', 'Arah', 'Jenis', 'Kode Jenis',
+    const header = ['Nomor Resmi', 'Tanggal Surat', 'Unit', 'Kepanitiaan', 'Arah/Atribut', 'Jenis', 'Kode Jenis',
       'Penerima', 'Perihal', 'Status', 'Diterbitkan Oleh', 'Waktu Terbit', 'Nomor Legacy']
     const rows = letters.map(l => [
       l.officialNumber ?? l.legacyNumber ?? '',
       l.letterDate ? l.letterDate.toISOString().slice(0, 10) : '',
       l.issuingUnit.code,
       l.committee?.code ?? '',
-      l.direction ?? '',
+      atributSurat(l),
       l.letterType?.name ?? '',
       l.letterType?.code ?? '',
       l.recipient ?? '',

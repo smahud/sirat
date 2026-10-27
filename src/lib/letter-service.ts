@@ -6,6 +6,7 @@ import { writeAudit } from '@/lib/audit'
 import { parseDsl } from '@/lib/numbering/dsl'
 import { renderNumber } from '@/lib/numbering/render'
 import { periodKeyFor } from '@/lib/numbering/validate'
+import { resolveFieldValues, FieldResolutionError } from '@/lib/numbering/fields'
 import { normalizeNumber } from '@/lib/constants'
 import { createHash } from 'crypto'
 import { ResolvedUser } from '@/lib/rbac'
@@ -96,7 +97,6 @@ export async function issueLetter(params: {
           if (letter.committee.status !== 'ACTIVE') throw new ServiceError(409, 'COMMITTEE_INACTIVE', 'Kepanitiaan tidak aktif')
         }
         if (!letter.letterDate) throw new ServiceError(400, 'VALIDATION', 'Tanggal surat wajib diisi sebelum penerbitan')
-        if (!letter.direction) throw new ServiceError(400, 'VALIDATION', 'Arah surat wajib dipilih')
         if (!letter.letterType) throw new ServiceError(400, 'VALIDATION', 'Jenis surat wajib dipilih')
         if (!letter.letterType.isActive) throw new ServiceError(409, 'LETTER_TYPE_INACTIVE', 'Jenis surat tidak aktif')
 
@@ -120,6 +120,23 @@ export async function issueLetter(params: {
         if (!activeVersion) throw new ServiceError(409, 'NO_ACTIVE_PROFILE', 'Tidak ada profil penomoran aktif untuk konteks ini')
 
         const dsl = parseDsl(activeVersion.dsl)
+
+        // 4b) Validasi pilihan Dropdown operator terhadap VERSI AKTIF ini (E.4/E.5):
+        // opsi harus dikenal & aktif pada konfigurasi versi terkait; field wajib
+        // harus terisi. Draft lama (v1) dijembatani lewat legacyKey arah.
+        let resolvedFields: Record<string, { optionId: string; label: string; code: string }>
+        try {
+          resolvedFields = resolveFieldValues(
+            dsl,
+            letter.fieldValues ? JSON.parse(letter.fieldValues) : null,
+            letter.direction, // fallback migrasi v1 → v2
+          )
+        } catch (e) {
+          if (e instanceof FieldResolutionError) {
+            throw new ServiceError(400, 'FIELD_' + e.code, e.message)
+          }
+          throw e
+        }
 
         // 5) Namespace counter: teknis, independen dari teks nomor
         const ns = letter.committee
@@ -148,7 +165,7 @@ export async function issueLetter(params: {
         // 8) Bangun nomor final
         const rendered = renderNumber(dsl, {
           seq,
-          direction: letter.direction,
+          fieldValues: Object.fromEntries(Object.entries(resolvedFields).map(([k, v]) => [k, v.optionId])),
           letterTypeCode: letter.letterType.code,
           unitCode: letter.issuingUnit.code,
           committeeCode: letter.committee?.code,
@@ -192,13 +209,18 @@ export async function issueLetter(params: {
               dsl,
               parts: rendered.parts,
               inputs: {
-                direction: letter.direction,
+                // E.7: snapshot label, pilihan, kode & versi mapping saat terbit —
+                // perubahan konfigurasi Dropdown berikutnya tidak mengubah histori.
+                fieldValues: resolvedFields,
                 letterTypeId: letter.letterTypeId,
                 letterDate: letter.letterDate,
                 unitCode: letter.issuingUnit.code,
                 committeeCode: letter.committee?.code ?? null,
               },
             }),
+            fieldValues: JSON.stringify(Object.fromEntries(
+              Object.entries(resolvedFields).map(([k, v]) => [k, v.optionId]),
+            )),
           },
         })
         if (updated.count === 0) {

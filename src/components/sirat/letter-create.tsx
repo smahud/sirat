@@ -49,7 +49,7 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
   const qc = useQueryClient()
   const [unitId, setUnitId] = useState('')
   const [committeeId, setCommitteeId] = useState('NONE')
-  const [direction, setDirection] = useState('')
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({}) // pilihan Dropdown dinamis (v1.6)
   const [letterTypeId, setLetterTypeId] = useState('')
   const [letterDate, setLetterDate] = useState(new Date().toISOString().slice(0, 10))
   const [recipient, setRecipient] = useState('')
@@ -109,15 +109,16 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
 
   const selectedType = letterTypes.data?.letterTypes.find(t => t.id === letterTypeId)
 
-  // Preview nomor (perkiraan)
+  // Preview nomor (perkiraan) + spesifikasi field formulir dinamis dari profil aktif (v1.6)
   const previewParams = useMemo(() => {
     const p = new URLSearchParams({ unitId: effectiveUnitId })
     if (effectiveCommitteeId !== 'NONE') p.set('committeeId', effectiveCommitteeId)
-    if (direction) p.set('direction', direction)
     if (letterTypeId) p.set('letterTypeId', letterTypeId)
     if (letterDate) p.set('letterDate', letterDate)
+    const filled = Object.fromEntries(Object.entries(fieldValues).filter(([, v]) => v))
+    if (Object.keys(filled).length > 0) p.set('fields', JSON.stringify(filled))
     return p.toString()
-  }, [effectiveUnitId, effectiveCommitteeId, direction, letterTypeId, letterDate])
+  }, [effectiveUnitId, effectiveCommitteeId, fieldValues, letterTypeId, letterDate])
 
   const preview = useQuery({
     queryKey: ['preview', previewParams],
@@ -171,7 +172,7 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
       const body = {
         issuingUnitId: effectiveUnitId,
         committeeId: effectiveCommitteeId === 'NONE' ? null : effectiveCommitteeId,
-        direction,
+        fieldValues: Object.fromEntries(Object.entries(fieldValues).filter(([, v]) => v)),
         letterTypeId,
         letterDate,
         recipient: recipient || null,
@@ -191,7 +192,13 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
     onError: (e) => toast.error((e as Error).message),
   })
 
-  const canSubmit = effectiveUnitId && direction && letterTypeId && letterDate
+  // Field formulir dinamis (v1.6): spesifikasi dari profil aktif via preview API.
+  // Wajib = flag required ATAU ikut nomor (segmen nomor butuh nilai).
+  const dynFields = preview.data?.fields ?? []
+  const dynMissing = dynFields.filter(f =>
+    (f.required || f.inNumber) && !fieldValues[f.key] && !f.defaultOptionId)
+  const canSubmit = effectiveUnitId && letterTypeId && letterDate
+    && dynMissing.length === 0
     && (effectiveCommitteeId !== 'NONE' || canRegular)
 
   return (
@@ -211,7 +218,7 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
                 <Building2 className="w-3.5 h-3.5 text-muted-foreground" /> Unit penerbit
                 {singleUnit && <Lock className="w-3 h-3 text-muted-foreground" aria-label="Ditetapkan otomatis — scope tunggal" />}
               </Label>
-              <Select value={effectiveUnitId || undefined} onValueChange={(v) => { setUnitId(v); setCommitteeId('NONE') }} disabled={singleUnit}>
+              <Select value={effectiveUnitId ?? ''} onValueChange={(v) => { setUnitId(v); setCommitteeId('NONE') }} disabled={singleUnit}>
                 <SelectTrigger className="bg-surface"><SelectValue placeholder="Pilih unit" /></SelectTrigger>
                 <SelectContent>
                   {activeUnits.map((u) => (
@@ -244,23 +251,45 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-[12px] font-semibold">Arah surat</Label>
-              <Select value={direction || undefined} onValueChange={setDirection}>
-                <SelectTrigger className="bg-surface"><SelectValue placeholder="Internal / Eksternal" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="INTERNAL">Internal</SelectItem>
-                  <SelectItem value="EXTERNAL">Eksternal</SelectItem>
-                </SelectContent>
-              </Select>
+          {/* Field formulir dinamis dari profil penomoran (v1.6 — mis. Arah Surat, Klasifikasi) */}
+          {dynFields.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {dynFields.map((f) => (
+                <div key={f.key} className="space-y-1.5">
+                  <Label htmlFor={`df-${f.key}`} className="text-[12px] font-semibold flex items-center gap-1 flex-wrap">
+                    {f.label}
+                    {(f.required || f.inNumber) && <span className="text-destructive">*</span>}
+                    {!f.inNumber && (
+                      <span className="text-[10px] font-normal text-muted-foreground">(metadata)</span>
+                    )}
+                  </Label>
+                  <Select
+                    value={fieldValues[f.key] || f.defaultOptionId || ''}
+                    onValueChange={(v) => setFieldValues(prev => ({ ...prev, [f.key]: v }))}>
+                    <SelectTrigger id={`df-${f.key}`} className="bg-surface">
+                      <SelectValue placeholder={f.placeholder || 'Pilih nilai'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {f.options.map((o) => (
+                        <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {f.helperText && (
+                    <p className="text-[10.5px] text-muted-foreground">{f.helperText}</p>
+                  )}
+                </div>
+              ))}
             </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-[12px] font-semibold flex items-center gap-1">
                 Jenis surat
                 <LetterTypeInfo selected={selectedType} />
               </Label>
-              <Select value={letterTypeId || undefined} onValueChange={setLetterTypeId}>
+              <Select value={letterTypeId ?? ''} onValueChange={setLetterTypeId}>
                 <SelectTrigger className="bg-surface"><SelectValue placeholder="Pilih jenis" /></SelectTrigger>
                 <SelectContent>
                   {(() => {
@@ -536,4 +565,17 @@ interface PreviewRes {
   note?: string
   reason?: string
   error?: string
+  fields?: DynFieldSpec[]
+}
+
+/** Spesifikasi field formulir dinamis dari profil penomoran aktif (v1.6). */
+interface DynFieldSpec {
+  key: string
+  label: string
+  placeholder: string | null
+  helperText: string | null
+  required: boolean
+  inNumber: boolean
+  defaultOptionId: string | null
+  options: { id: string; label: string }[]
 }

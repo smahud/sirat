@@ -46,7 +46,8 @@ components:
         issuedAt: { type: string, format: date-time, nullable: true }
         sequence: { type: integer, nullable: true }
         officialNumber: { type: string, nullable: true }
-        direction: { type: string, enum: [INTERNAL, EXTERNAL], nullable: true }
+        direction: { type: string, enum: [INTERNAL, EXTERNAL], nullable: true, description: LEGACY v1 — beku utk histori/import }
+        fieldValues: { type: string, nullable: true, description: 'JSON v1.6: { [fieldKey]: optionId } — pilihan Dropdown operator' }
         letterTypeId: { type: string, nullable: true }
         recipient: { type: string, nullable: true }
         subject: { type: string, nullable: true }
@@ -252,11 +253,15 @@ paths:
           application/json:
             schema:
               type: object
-              required: [issuingUnitId, direction, letterTypeId, letterDate]
+              required: [issuingUnitId, letterTypeId, letterDate]
               properties:
                 issuingUnitId: { type: string }
                 committeeId: { type: string, nullable: true }
-                direction: { type: string, enum: [INTERNAL, EXTERNAL] }
+                direction: { type: string, enum: [INTERNAL, EXTERNAL], description: LEGACY v1 — klien baru memakai fieldValues }
+                fieldValues:
+                  type: object
+                  description: 'v1.6 — pilihan Dropdown operator: { fieldKey: optionId }. Divalidasi terhadap profil aktif (opsi harus dikenal & aktif).'
+                  additionalProperties: { type: string }
                 letterTypeId: { type: string }
                 letterDate: { type: string, format: date }
                 recipient: { type: string }
@@ -265,7 +270,7 @@ paths:
 
   /api/letters/preview:
     get:
-      summary: Preview nomor (bukan reservasi — FR-009)
+      summary: Preview nomor (bukan reservasi — FR-009) + spesifikasi field formulir dinamis (v1.6)
       parameters:
         - in: query
           name: unitId
@@ -277,6 +282,11 @@ paths:
         - in: query
           name: direction
           schema: { type: string, enum: [INTERNAL, EXTERNAL] }
+          description: LEGACY v1 — draft lama
+        - in: query
+          name: fields
+          schema: { type: string }
+          description: 'v1.6 — JSON { fieldKey: optionId } pilihan Dropdown operator (URL-encoded)'
         - in: query
           name: letterTypeId
           schema: { type: string }
@@ -285,7 +295,7 @@ paths:
           schema: { type: string, format: date }
       responses:
         '200':
-          description: Preview number + parts + note
+          description: Preview number + parts + fields (form spec) + note
           content:
             application/json:
               schema:
@@ -296,6 +306,27 @@ paths:
                   isEstimate: { type: boolean, default: true }
                   note: { type: string, example: "Perkiraan nomor — bukan reservasi" }
                   parts: { type: array, items: {} }
+                  fields:
+                    type: array
+                    description: Spesifikasi formulir dinamis dari profil aktif (urut order)
+                    items:
+                      type: object
+                      properties:
+                        key: { type: string }
+                        label: { type: string }
+                        placeholder: { type: string, nullable: true }
+                        helperText: { type: string, nullable: true }
+                        required: { type: boolean }
+                        inNumber: { type: boolean }
+                        defaultOptionId: { type: string, nullable: true }
+                        options:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id: { type: string }
+                              label: { type: string }
+                  missingInputs: { type: array, items: { type: string } }
 
   /api/letters/{id}:
     get: { summary: Detail surat + files + versions + snapshot }

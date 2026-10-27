@@ -54,6 +54,7 @@ model Unit {
   profiles    NumberingProfile[]
   letters     Letter[]          @relation("IssuingUnit")
   backupGrants BackupGrant[]
+  importBatches ImportBatch[]  @relation("ImportTargetUnit")
 }
 
 model Committee {
@@ -143,7 +144,8 @@ model LetterType {
   id            String   @id @default(cuid())
   code          String   @unique // snapshot dicetak saat terbit; perubahan kode hanya utk terbitan baru
   name          String
-  description   String?  // keterangan/kategori utk tooltip "Kode Surat" (master prompt C)
+  category      String?  // kelompok navigasi (5 kategori standar) — default config v1.4
+  description   String?  // keterangan singkat utk tooltip "Kode Surat" (master prompt C)
   purpose       String?  // fungsi/tujuan jenis surat (master prompt lanjutan D.2)
   usageExamples String?  // contoh penggunaan, dipisah baris (D.2)
   notes         String?  // catatan/petunjuk tambahan (D.2)
@@ -231,7 +233,8 @@ model Letter {
   profileVersionId String?
   profileVersion  NumberingProfileVersion? @relation("LetterProfile", fields: [profileVersionId], references: [id])
   numberSnapshot  String? // JSON: komponen, input, kode saat terbit
-  direction       String? // INTERNAL|EXTERNAL
+  direction       String? // LEGACY v1 (INTERNAL|EXTERNAL) — beku utk histori; surat baru memakai fieldValues
+  fieldValues     String? // JSON v1.6: { [fieldKey]: optionId } — pilihan Dropdown operator
   letterTypeId    String?
   letterType      LetterType? @relation("LetterType", fields: [letterTypeId], references: [id])
   committee       Committee? @relation("LetterCommittee", fields: [committeeId], references: [id])
@@ -335,6 +338,7 @@ model ImportBatch {
   status     String    @default("DRY_RUN") // DRY_RUN|COMMITTED
   report     String? // JSON ringkasan
   targetUnitId String?
+  targetUnit Unit?   @relation("ImportTargetUnit", fields: [targetUnitId], references: [id])
   createdBy  String?
   createdAt  DateTime  @default(now())
   committedAt DateTime?

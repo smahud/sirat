@@ -58,6 +58,8 @@ interface LetterDetailData {
     officialNumber: string | null
     legacyNumber: string | null
     direction: string | null
+    fieldValues: string | null
+    numberSnapshot: string | null
     letterDate: string | null
     issuedAt: string | null
     cancelReason: string | null
@@ -193,9 +195,11 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
 
   return (
     <Dialog open={!!letterId} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto scrollbar-slim">
+      <DialogContent aria-describedby={undefined} className="max-w-2xl max-h-[92vh] overflow-y-auto scrollbar-slim">
         {detail.isLoading && (
           <div className="py-16 flex flex-col items-center gap-3 text-muted-foreground">
+            {/* a11y: title selalu ada agar screen reader punya konteks saat memuat */}
+            <DialogTitle className="sr-only">Detail Surat</DialogTitle>
             <div className="w-12 h-12 rounded-2xl bg-emerald-soft text-emerald flex items-center justify-center animate-pulse">
               <Hash className="w-6 h-6" />
             </div>
@@ -233,7 +237,7 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
             {/* Metadata */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-3.5 rounded-xl border bg-surface p-4 shadow-card">
               <DetailItem icon={CalendarDays} label="Tanggal surat" value={fmtDate(l.letterDate) ?? '—'} />
-              <DetailItem icon={Building2} label="Arah" value={l.direction === 'INTERNAL' ? 'Internal' : l.direction === 'EXTERNAL' ? 'Eksternal' : '—'} />
+              <FieldValuesDisplay letter={l} />
               <DetailItem icon={User} label="Penerima" value={l.recipient ?? '—'} />
               <DetailItem icon={Stamp} label="Penerbit" value={l.issuer?.fullName ?? '—'} />
               <DetailItem icon={CalendarDays} label="Waktu terbit" value={l.issuedAt ? fmtDateTime(l.issuedAt) : '—'} />
@@ -463,6 +467,48 @@ function DetailItem({ icon: Icon, label, value, full }: {
       <p className="text-[13.5px] font-medium break-words">{value}</p>
     </div>
   )
+}
+
+/**
+ * Tampilan pilihan Dropdown surat (v1.6):
+ * - Surat terbit: label + kode dari snapshot penerbitan (E.7 — tidak berubah
+ *   meski konfigurasi profil kemudian diedit).
+ * - Surat lama/import: fallback kolom legacy direction (Internal/Eksternal).
+ * - Draft baru: pilihan tersimpan sebagai fieldKey → optionId.
+ */
+function FieldValuesDisplay({ letter }: {
+  letter: { direction: string | null; fieldValues: string | null; numberSnapshot: string | null }
+}) {
+  // 1) Snapshot penerbitan: label lengkap + kode
+  try {
+    if (letter.numberSnapshot) {
+      const snap = JSON.parse(letter.numberSnapshot) as {
+        inputs?: { fieldValues?: Record<string, { label: string; code: string }> }
+      }
+      const fv = snap.inputs?.fieldValues
+      if (fv && Object.keys(fv).length > 0) {
+        const items = Object.values(fv)
+        return (
+          <DetailItem icon={Building2} label={items.length === 1 ? 'Atribut surat' : 'Atribut surat'}
+            value={items.map(v => `${v.label} (${v.code})`).join(' · ')} />
+        )
+      }
+    }
+  } catch { /* snapshot rusak → fallback */ }
+  // 2) Draft v1.6: tampilkan pilihan teknis
+  try {
+    if (letter.fieldValues) {
+      const fv = JSON.parse(letter.fieldValues) as Record<string, string>
+      const keys = Object.keys(fv)
+      if (keys.length > 0) {
+        return <DetailItem icon={Building2} label="Atribut surat (draft)"
+          value={keys.map(k => `${k}: ${fv[k]}`).join(' · ')} />
+      }
+    }
+  } catch { /* abaikan */ }
+  // 3) Legacy v1 / import
+  return <DetailItem icon={Building2} label="Arah"
+    value={letter.direction === 'INTERNAL' ? 'Internal' : letter.direction === 'EXTERNAL' ? 'Eksternal' : '—'} />
 }
 
 /**

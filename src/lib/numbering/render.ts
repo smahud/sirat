@@ -1,10 +1,12 @@
 // Render engine nomor — murni, deterministik, tanpa side effect.
-import { NumberingDSL, DSLComponent } from './dsl'
-import { Direction, romanMonth, monthNameId, padSequence, DateFormat } from '@/lib/constants'
+// v1.6: komponen 'direction' diganti 'fieldRef' → resolusi via konfigurasi
+// Dropdown (operator memilih LABEL, nomor memakai KODE terpetakan).
+import { NumberingDSL, DSLComponent, DropdownField, findField } from './dsl'
+import { romanMonth, monthNameId, padSequence, DateFormat } from '@/lib/constants'
 
 export interface RenderContext {
   seq?: number              // hanya saat issue nyata; preview boleh undefined
-  direction?: Direction | string
+  fieldValues?: Record<string, string>  // fieldKey → optionId (pilihan operator)
   letterTypeCode?: string
   unitCode?: string
   committeeCode?: string
@@ -36,10 +38,23 @@ function formatDate(d: Date, format: DateFormat): string {
   }
 }
 
+/** Opsi terpilih sebuah field: nilai eksplisit → default → null. */
+export function resolveOption(
+  field: DropdownField,
+  values: Record<string, string> | undefined,
+): { id: string; label: string; code: string } | null {
+  const v = values?.[field.key] ?? field.defaultOptionId ?? null
+  if (!v) return null
+  const opt = field.options.find(o => o.id === v)
+  if (!opt) return null
+  return { id: opt.id, label: opt.label, code: opt.code }
+}
+
 /**
  * Merender nomor dari DSL dan konteks.
  * seq undefined → placeholder '###' sesuai padding (PREVIEW, bukan reservasi).
  * Komponen yang sumbernya kosong → error eksplisit (bukan string kosong diam-diam).
+ * fieldRef: operator melihat label, nomor memakai kode (F.3).
  */
 export function renderNumber(dsl: NumberingDSL, ctx: RenderContext): RenderResult {
   const parts: RenderedPart[] = []
@@ -55,11 +70,16 @@ export function renderNumber(dsl: NumberingDSL, ctx: RenderContext): RenderResul
         parts.push({ componentType: 'sequence', source: 'urutan dari counter (preview belum dialokasikan)', value: v })
         break
       }
-      case 'direction': {
-        if (!ctx.direction) throw new RenderError('Arah surat (internal/eksternal) belum dipilih')
-        const mapped = c.mapping[ctx.direction as Direction]
-        if (!mapped) throw new RenderError(`Mapping arah tidak punya nilai untuk ${ctx.direction}`)
-        parts.push({ componentType: 'direction', source: `arah ${ctx.direction} → ${mapped}`, value: mapped })
+      case 'fieldRef': {
+        const field = findField(dsl, c.field)
+        if (!field) throw new RenderError(`Komponen nomor merujuk field yang tidak didefinisikan: "${c.field}"`)
+        const opt = resolveOption(field, ctx.fieldValues)
+        if (!opt) throw new RenderError(`"${field.label}" belum dipilih`)
+        parts.push({
+          componentType: 'fieldRef',
+          source: `${field.label}: ${opt.label} → ${opt.code}`,
+          value: opt.code,
+        })
         break
       }
       case 'letterTypeCode': {
@@ -99,13 +119,64 @@ export class RenderError extends Error {
   }
 }
 
-/** Daftar field input yang dibutuhkan DSL untuk membangun form dinamis. */
+// ===== Spesifikasi formulir dinamis untuk operator =====
+
+export interface FormFieldOptionSpec {
+  id: string
+  label: string
+}
+export interface FormFieldSpec {
+  key: string
+  label: string
+  placeholder: string | null
+  helperText: string | null
+  required: boolean
+  inNumber: boolean          // true bila kode ikut nomor (ada fieldRef)
+  defaultOptionId: string | null
+  options: FormFieldOptionSpec[]
+}
+
+/**
+ * Daftar field formulir yang harus dirender operator (urut 'order', stabil
+ * berdasar posisi array). Hanya opsi AKTIF yang ditawarkan (E.5).
+ */
+export function formFields(dsl: NumberingDSL): FormFieldSpec[] {
+  const inNumberKeys = new Set(
+    dsl.components.filter(c => c.type === 'fieldRef').map(c => (c as { field: string }).field),
+  )
+  return [...dsl.fields]
+    .map((f, idx) => ({ f, idx }))
+    .sort((a, b) => (a.f.order ?? a.idx) - (b.f.order ?? b.idx) || a.idx - b.idx)
+    .map(({ f }) => ({
+      key: f.key,
+      label: f.label,
+      placeholder: f.placeholder ?? null,
+      helperText: f.helperText ?? null,
+      required: f.required,
+      inNumber: inNumberKeys.has(f.key),
+      defaultOptionId: f.defaultOptionId ?? null,
+      options: f.options.filter(o => o.active).map(o => ({ id: o.id, label: o.label })),
+    }))
+}
+
+/**
+ * Daftar input yang dibutuhkan DSL sebelum nomor dapat diterbitkan.
+ * Field wajib tanpa default harus diisi operator (E.4); field dalam nomor
+ * selalu wajib tersedia nilai saat render (default dipakai bila ada).
+ */
 export function requiredInputs(dsl: NumberingDSL): string[] {
   const out = new Set<string>()
   for (const c of dsl.components) {
-    if (c.type === 'direction') out.add('direction')
     if (c.type === 'letterTypeCode') out.add('letterTypeId')
     if (c.type === 'letterDate') out.add('letterDate')
+    if (c.type === 'fieldRef') {
+      const f = findField(dsl, c.field)
+      if (f && !f.defaultOptionId) out.add(`field:${f.key}`)
+    }
+  }
+  // Field wajib meskipun hanya metadata (tidak ikut nomor) tetap harus terisi
+  for (const f of dsl.fields) {
+    if (f.required && !f.defaultOptionId) out.add(`field:${f.key}`)
   }
   return [...out]
 }

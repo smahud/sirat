@@ -50,12 +50,16 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 const patchSchema = z.object({
-  // FR-013/blueprint: metadata non-komponen boleh dikoreksi; komponen nomor (tanggal/arah/jenis) hanya lewat cancel+pengganti
+  // FR-013/blueprint: metadata non-komponen boleh dikoreksi; komponen nomor (tanggal/field/jenis) hanya lewat cancel+pengganti
   recipient: z.string().trim().max(240).optional().nullable(),
   subject: z.string().trim().max(240).optional().nullable(),
   notes: z.string().trim().max(2000).optional().nullable(),
   // khusus DRAFT: komponen boleh diubah sebelum terbit
-  direction: z.enum(['INTERNAL', 'EXTERNAL']).optional(),
+  direction: z.enum(['INTERNAL', 'EXTERNAL']).optional(), // LEGACY v1
+  fieldValues: z.record(
+    z.string().regex(/^[a-z][a-z0-9_]{1,31}$/),
+    z.string().min(1).max(64),
+  ).optional().nullable(), // v1.6: pilihan Dropdown (DRAFT saja)
   letterTypeId: z.string().optional(),
   letterDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   committeeId: z.string().optional().nullable(),
@@ -95,6 +99,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     if (letter.status === 'DRAFT') {
       if (body.direction) { data.direction = body.direction; before.direction = letter.direction }
+      if (body.fieldValues !== undefined) {
+        data.fieldValues = body.fieldValues && Object.keys(body.fieldValues).length > 0
+          ? JSON.stringify(body.fieldValues)
+          : null
+        before.fieldValues = letter.fieldValues
+      }
       if (body.letterTypeId) { data.letterTypeId = body.letterTypeId; before.letterTypeId = letter.letterTypeId }
       if (body.letterDate) { data.letterDate = new Date(`${body.letterDate}T00:00:00.000Z`); before.letterDate = letter.letterDate }
       if (body.committeeId !== undefined) {
@@ -119,7 +129,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
     } else {
       // Surat terbit: komponen nomor tidak boleh berubah
-      if (body.direction || body.letterTypeId || body.letterDate !== undefined || body.committeeId !== undefined) {
+      if (body.direction || body.fieldValues !== undefined || body.letterTypeId || body.letterDate !== undefined || body.committeeId !== undefined) {
         return fail(409, 'IMMUTABLE_COMPONENT',
           'Komponen nomor surat terbit tidak dapat diubah. Batalkan surat dan terbitkan pengganti.')
       }
