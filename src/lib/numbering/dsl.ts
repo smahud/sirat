@@ -200,6 +200,9 @@ export function presetYapsiDsl(): NumberingDSL {
       { type: 'letterDate', format: 'MONTH_ROMAN' },
       { type: 'letterDate', format: 'YEAR_4' },
     ],
+    // Saran kebijakan counter (D.3): dipakai sebagai prefill dialog aktivasi.
+    // YEARLY = nomor restart tiap tahun — sesuai format yang memuat tahun.
+    policy: { resetPolicy: 'YEARLY', dateSource: 'LETTER_DATE' },
   }
 }
 

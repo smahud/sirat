@@ -97,7 +97,7 @@ npx prisma migrate deploy --schema prisma/schema.prisma
 # Atau, bila belum ada migration history, pakai db push:
 # npx prisma db push --schema prisma/schema.prisma --accept-data-loss
 
-npm run seed               # 7 unit + 8 jenis surat + profil YAPSI DRAFT
+npm run seed               # 7 unit + 13 jenis surat + profil YAPSI v1 AKTIF (counter YEARLY/LETTER_DATE)
 node scripts/bootstrap-admin.mjs
 # CATAT password yang dicetak — tidak akan ditampilkan lagi.
 # Hapus env SIRAT_ADMIN_PASSWORD dari .env setelah ini.
@@ -354,8 +354,12 @@ Mengacu pada Blueprint §16.4 + Master Prompt §7 + FR-032.
    ```bash
    systemctl start sirat
    ```
-7. **Aktifkan issuance produksi**: konfirmasi profil YAPSI sudah ACTIVE;
-   rekonsiliasi jumlah surat di DB vs file Excel.
+7. **Aktifkan issuance produksi**: konfirmasi profil YAPSI sudah ACTIVE
+   (seed v1.6.1 membuatnya langsung AKTIF; instalasi lama dari seed versi
+   sebelumnya harus mengaktivasi manual via menu Profil Nomor — tanpa profil
+   aktif, form Buat Surat tidak menampilkan field nomor dan surat tidak bisa
+   diterbitkan); rekonsiliasi jumlah surat di DB vs file Excel.
+   Unit selain YAPSI perlu profil sendiri (buat + aktivasi via Profil Nomor).
 8. Smoke test full (lihat `scripts/smoke-local.sh` dengan BASE_URL produksi).
 9. Umumkan ke operator: SIRAT menjadi sumber resmi. Excel dibekukan.
 

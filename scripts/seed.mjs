@@ -3,7 +3,10 @@
 // - 7 unit permanen (YAPSI/PP, KB, RA, MI, MTs, Pondok Pesantren, Rumah Tahfidz)
 // - 13 jenis surat kaya keterangan (default config v1.4): scripts/letter-types-defaults.json
 //   (8 kode lampiran workbook + 5 jenis umum tambahan; kategori/deskripsi/fungsi/contoh/catatan)
-// - Profil preset YAPSI (format workbook) versi DRAFT (aktivasi eksplisit pemilik)
+// - Profil preset YAPSI (format workbook) versi AKTIF — instalasi baru langsung
+//   bisa membuat surat bernomor (v1.6.1: dulu DRAFT & menimbulkan kebingungan
+//   "komponen nomor tidak muncul"; aktivasi kini bagian seed, kebijakan counter
+//   YEARLY/LETTER_DATE dari saran preset dan masih bisa diganti selama 0 surat)
 // - Namespace default per unit (counter terpisah antar unit)
 // Jalankan: bun scripts/seed.mjs (atau node scripts/seed.mjs)
 import { PrismaClient } from '@prisma/client'
@@ -47,6 +50,8 @@ const PRESET_DSL = {
     { type: 'letterDate', format: 'MONTH_ROMAN' },
     { type: 'letterDate', format: 'YEAR_4' },
   ],
+  // Saran kebijakan (D.3) — dipakai seed saat aktivasi & prefill dialog aktivasi.
+  policy: { resetPolicy: 'YEARLY', dateSource: 'LETTER_DATE' },
 }
 
 const UNITS = [
@@ -101,7 +106,11 @@ async function main() {
     }
   }
 
-  // Profil preset YAPSI (unit YAPSI), versi DRAFT — pemilik mengaktivasi eksplisit
+  // Profil preset YAPSI (unit YAPSI) — v1.6.1: dibuat langsung AKTIF agar
+  // instalasi baru langsung bisa membuat surat bernomor tanpa langkah tersembunyi.
+  // (Bug lapangan: preset DRAFT tidak pernah diaktivasi → operator melihat form
+  // tanpa field nomor. Aktivasi eksplisit pemilik kini hanya wajib saat mengganti
+  // kebijakan/format — versi aktif bisa diganti kapan pun via Profil Nomor.)
   const yapsi = await prisma.unit.findUnique({ where: { code: 'YAPSI' } })
   let profile = await prisma.numberingProfile.findFirst({ where: { ownerId: yapsi.id, committeeId: null } })
   if (!profile) {
@@ -111,8 +120,24 @@ async function main() {
   }
   const hasVersion = await prisma.numberingProfileVersion.findFirst({ where: { profileId: profile.id } })
   if (!hasVersion) {
+    // Namespace unit YAPSI sudah dibuat loop unit di atas (0 surat → aman diubah)
+    const ns = await prisma.counterNamespace.findFirst({ where: { unitId: yapsi.id, committeeId: null } })
+    if (ns) {
+      await prisma.counterNamespace.update({
+        where: { id: ns.id },
+        data: { resetPolicy: PRESET_DSL.policy.resetPolicy, dateSource: PRESET_DSL.policy.dateSource },
+      })
+    }
     await prisma.numberingProfileVersion.create({
-      data: { profileId: profile.id, version: 1, status: 'DRAFT', dsl: JSON.stringify(PRESET_DSL) },
+      data: {
+        profileId: profile.id,
+        version: 1,
+        status: 'ACTIVE',
+        dsl: JSON.stringify(PRESET_DSL),
+        activatedAt: new Date(),
+        effectiveFrom: new Date(),
+        namespaceId: ns?.id ?? null,
+      },
     })
   }
 
@@ -140,7 +165,8 @@ async function main() {
   console.log('Seed selesai:')
   console.log(`- ${await prisma.unit.count()} unit`)
   console.log(`- ${await prisma.letterType.count()} jenis surat`)
-  console.log(`- profil preset YAPSI: ${profile.id} (versi DRAFT, menunggu aktivasi eksplisit)`)
+  console.log(`- profil preset YAPSI: ${profile.id} (versi 1 AKTIF — counter ${PRESET_DSL.policy.resetPolicy}/${PRESET_DSL.policy.dateSource})`)
+  console.log('- unit lain belum punya profil: buat & aktivasi lewat menu Profil Nomor (admin pusat)')
 }
 
 main()

@@ -254,7 +254,7 @@ export function AppShell() {
 
         <main className="flex-1 px-4 py-6 md:px-8 md:py-8 max-w-full overflow-x-hidden">
           <div className="mx-auto max-w-6xl animate-rise" key={view}>
-            <MainContent view={view} me={me} onProfileUpdated={refresh} />
+            <MainContent view={view} me={me} onProfileUpdated={refresh} onNavigate={setView} />
           </div>
         </main>
 
@@ -285,9 +285,11 @@ function roleLabel(role: string): string {
   return map[role] ?? role
 }
 
-function MainContent({ view, me, onProfileUpdated }: { view: ViewKey; me: Me; onProfileUpdated: () => void }) {
+function MainContent({ view, me, onProfileUpdated, onNavigate }: {
+  view: ViewKey; me: Me; onProfileUpdated: () => void; onNavigate: (v: ViewKey) => void
+}) {
   switch (view) {
-    case 'letters': return <LettersView />
+    case 'letters': return <LettersView onNavigate={onNavigate} />
     case 'units': return <UnitsView canManage={hasPerm(me.permissions, 'committee.manage')} />
     case 'profiles': return <ProfilesView />
     case 'lettertypes': return <LetterTypesView />

@@ -13,7 +13,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import { Info, Hash, Building2, CalendarDays, User, MessageSquareText, StickyNote, Users2, Lock, Link2, X, FileSearch } from 'lucide-react'
 import { UnitRow } from './letters-view'
-import { useMe, canUseUnitForRegularLetter, canUseCommitteeForLetter } from './use-session'
+import { useMe, hasPerm, canUseUnitForRegularLetter, canUseCommitteeForLetter } from './use-session'
 
 interface LetterTypeRow {
   id: string; code: string; name: string; category: string | null
@@ -41,10 +41,12 @@ interface RefDraft {
   note?: string
 }
 
-export function CreateLetterDialog({ open, onClose, onCreated }: {
+export function CreateLetterDialog({ open, onClose, onCreated, onNavigate }: {
   open: boolean
   onClose: () => void
   onCreated: (letterId: string) => void
+  /** Arahkan ke view lain (mis. profil penomoran) saat konteks belum siap. */
+  onNavigate?: (view: 'profiles') => void
 }) {
   const qc = useQueryClient()
   const [unitId, setUnitId] = useState('')
@@ -63,6 +65,25 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
   const refDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [refResults, setRefResults] = useState<RefSearchResult[]>([])
   const [refSearching, setRefSearching] = useState(false)
+
+  // Dialog dibuka ulang → mulai bersih: nilai surat sebelumnya tidak terbawa
+  // (mencegah duplikasi tak sengaja; scope unit tunggal tetap ter-auto-select).
+  const [lastOpen, setLastOpen] = useState(false)
+  if (open && !lastOpen) {
+    setLastOpen(true)
+    setUnitId('')
+    setCommitteeId('NONE')
+    setFieldValues({})
+    setLetterTypeId('')
+    setLetterDate(new Date().toISOString().slice(0, 10))
+    setRecipient('')
+    setSubject('')
+    setNotes('')
+    setRefDrafts([])
+    setRefInput('')
+    setRefResults([])
+  }
+  if (!open && lastOpen) setLastOpen(false)
 
   // Scope user (master prompt D.3): FE hanya menawarkan opsi yang diizinkan;
   // BE tetap memvalidasi ulang setiap payload (defense in depth).
@@ -106,6 +127,19 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
   const effectiveCommitteeId = committeeRequired && committeeId === 'NONE' && myCommittees.length > 0
     ? myCommittees[0].id
     : committeeId
+
+  // Ganti unit/kepanitiaan → profil penomoran konteks ikut berganti. Pilihan Dropdown
+  // lama bisa merujuk opsi yang tidak dikenal profil baru (E.5 UNKNOWN_OPTION) —
+  // reset agar formulir selalu konsisten dengan profil yang sedang aktif.
+  const ctxKey = `${effectiveUnitId ?? ''}|${effectiveCommitteeId ?? 'NONE'}`
+  const [lastCtxKey, setLastCtxKey] = useState('')
+  if (ctxKey !== lastCtxKey) {
+    setLastCtxKey(ctxKey)
+    if (Object.keys(fieldValues).length > 0) setFieldValues({})
+  }
+
+  // Pemegang profile.manage bisa menindaklanjuti sendiri (buka menu Profil Nomor)
+  const canManageProfile = hasPerm(me.data?.permissions, 'profile.manage')
 
   const selectedType = letterTypes.data?.letterTypes.find(t => t.id === letterTypeId)
 
@@ -440,13 +474,30 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
             </div>
           )}
           {preview.data && !preview.data.available && (
-            <div className="rounded-xl border border-gold/30 bg-gold-soft p-4 flex gap-3">
+            <div className="rounded-xl border border-gold/40 bg-gold-soft p-4 flex gap-3">
               <Info className="w-4 h-4 text-gold-dark shrink-0 mt-0.5" />
-              <div>
-                <p className="text-[12.5px] font-semibold text-gold-dark">Nomor belum bisa dihitung</p>
-                <p className="text-[11.5px] text-muted-foreground mt-0.5">{preview.data.reason}</p>
+              <div className="space-y-2 min-w-0">
+                <p className="text-[12.5px] font-semibold text-gold-dark">Komponen nomor belum tersedia</p>
+                <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                  {preview.data.reason}. Akibatnya field nomor (mis. Arah Surat) tidak muncul dan
+                  surat dari unit ini belum bisa diterbitkan.
+                  {canManageProfile
+                    ? ' Aktifkan profil penomoran unit ini terlebih dahulu — draft yang sudah dibuat akan tetap aman.'
+                    : ' Hubungi admin pusat untuk mengaktifkan profil penomoran unit ini.'}
+                </p>
+                {canManageProfile && onNavigate && (
+                  <Button size="sm" variant="outline" className="h-7 bg-surface text-[11.5px]"
+                    onClick={() => { onClose(); onNavigate('profiles') }}>
+                    <Hash className="w-3.5 h-3.5 mr-1" /> Buka Profil Nomor
+                  </Button>
+                )}
               </div>
             </div>
+          )}
+          {preview.isError && !preview.data && (
+            <p className="text-[11.5px] text-destructive">
+              Gagal memuat pratinjau nomor — {(preview.error as Error | undefined)?.message ?? 'periksa koneksi lalu pilih ulang unit.'}
+            </p>
           )}
         </div>
 
@@ -469,7 +520,7 @@ export function CreateLetterDialog({ open, onClose, onCreated }: {
  * ⓘ Kode Surat (master prompt C): popover dari data master LetterType — bukan hardcode.
  * Dukung hover (desktop), tap (layar sentuh), dan keyboard (focus + Enter/Space).
  */
-function LetterTypeInfo({ selected }: { selected?: LetterTypeRow }) {
+export function LetterTypeInfo({ selected }: { selected?: LetterTypeRow }) {
   const [open, setOpen] = useState(false)
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -559,7 +610,7 @@ function LetterTypeInfo({ selected }: { selected?: LetterTypeRow }) {
   )
 }
 
-interface PreviewRes {
+export interface PreviewRes {
   available: boolean
   previewNumber?: string
   note?: string
@@ -569,7 +620,7 @@ interface PreviewRes {
 }
 
 /** Spesifikasi field formulir dinamis dari profil penomoran aktif (v1.6). */
-interface DynFieldSpec {
+export interface DynFieldSpec {
   key: string
   label: string
   placeholder: string | null

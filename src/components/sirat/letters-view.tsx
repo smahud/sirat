@@ -21,7 +21,7 @@ import { LetterDetail } from './letter-detail'
 interface UnitsRes { units: UnitRow[] }
 export interface UnitRow { id: string; code: string; name: string; status: string }
 
-export function LettersView() {
+export function LettersView({ onNavigate }: { onNavigate?: (view: 'profiles') => void }) {
   const qc = useQueryClient()
   const [q, setQ] = useState('')
   const [status, setStatus] = useState('ALL')
@@ -218,6 +218,7 @@ export function LettersView() {
       <CreateLetterDialog
         open={showCreate}
         onClose={() => setShowCreate(false)}
+        onNavigate={onNavigate}
         onCreated={(id) => { setShowCreate(false); setDetailId(id); qc.invalidateQueries({ queryKey: ['letters'] }) }}
       />
       <LetterDetail

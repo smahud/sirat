@@ -1,20 +1,24 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, apiGet, apiPost, fmtBytes, fmtDate, fmtDateTime } from '@/lib/client'
+import { api, apiGet, apiPatch, apiPost, fmtBytes, fmtDate, fmtDateTime } from '@/lib/client'
 import { StatusBadge, MiniTag, EmptyState } from './ui-bits'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import {
   Download, FileUp, Trash2, Undo2, Ban, Stamp, Paperclip, FileCheck2,
-  Hash, Building2, Users2, CalendarDays, User, AlertTriangle, Link2, GitBranch, Inbox,
+  Hash, Building2, Users2, CalendarDays, User, AlertTriangle, Link2, GitBranch, Inbox, Pencil,
+  MessageSquareText, StickyNote,
 } from 'lucide-react'
+import { DynFieldSpec, PreviewRes, LetterTypeInfo } from './letter-create'
 
 interface RefRow {
   id: string
@@ -97,10 +101,17 @@ interface ArchiveFileRow {
   }[]
 }
 
+interface PreviewSpecRes extends PreviewRes {
+  requiredInputs?: string[]
+  missingInputs?: string[]
+  missingRequiredLabels?: string[]
+}
+
 export function LetterDetail({ letterId, onClose }: { letterId: string | null; onClose: () => void }) {
   const qc = useQueryClient()
   const [cancelOpen, setCancelOpen] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
+  const [editOpen, setEditOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [replaceFileId, setReplaceFileId] = useState<string | null>(null)
   const [uploadLabel, setUploadLabel] = useState<'original' | 'attachment'>('original')
@@ -181,6 +192,33 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
 
   const l = detail.data?.letter
 
+  // Spesifikasi field profil aktif utk konteks surat — hanya dimuat saat DRAFT:
+  // resolusi label pilihan, deteksi "belum bisa terbit", dan formulir ubah draft.
+  const draftPreview = useQuery({
+    queryKey: ['preview', l?.issuingUnit.id ?? '_', l?.committee?.id ?? 'NONE'],
+    queryFn: () => apiGet<PreviewSpecRes>(
+      `/api/letters/preview?unitId=${l!.issuingUnit.id}${l!.committee ? `&committeeId=${l!.committee.id}` : ''}`),
+    enabled: !!letterId && l?.status === 'DRAFT',
+    staleTime: 15_000,
+  })
+
+  // Label manusiawi utk pilihan Dropdown draft (E.7): pakai spesifikasi profil aktif;
+  // bila profil telah berganti sejak draft dibuat, fallback ke key teknis.
+  const draftFieldLabels = useMemo(() => {
+    if (!l?.fieldValues) return null
+    try {
+      const fv = JSON.parse(l.fieldValues) as Record<string, string>
+      const keys = Object.keys(fv)
+      if (keys.length === 0) return null
+      const specs = draftPreview.data?.fields
+      return keys.map(k => {
+        const f = specs?.find(s => s.key === k)
+        const o = f?.options.find(x => x.id === fv[k])
+        return f && o ? `${f.label}: ${o.label}` : `${k}: ${fv[k]}`
+      })
+    } catch { return null }
+  }, [l?.fieldValues, draftPreview.data?.fields])
+
   const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file && letterId) {
@@ -237,7 +275,7 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
             {/* Metadata */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-3.5 rounded-xl border bg-surface p-4 shadow-card">
               <DetailItem icon={CalendarDays} label="Tanggal surat" value={fmtDate(l.letterDate) ?? '—'} />
-              <FieldValuesDisplay letter={l} />
+              <FieldValuesDisplay letter={l} draftLabels={draftFieldLabels} />
               <DetailItem icon={User} label="Penerima" value={l.recipient ?? '—'} />
               <DetailItem icon={Stamp} label="Penerbit" value={l.issuer?.fullName ?? '—'} />
               <DetailItem icon={CalendarDays} label="Waktu terbit" value={l.issuedAt ? fmtDateTime(l.issuedAt) : '—'} />
@@ -276,9 +314,21 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
                   <Stamp className="w-4 h-4 mr-1.5" />
                   {issue.isPending ? 'Menerbitkan…' : 'Terbitkan Nomor'}
                 </Button>
+                <Button variant="outline" className="bg-surface" onClick={() => setEditOpen(true)}>
+                  <Pencil className="w-4 h-4 mr-1.5" /> Ubah Draft
+                </Button>
                 <p className="text-[12px] text-muted-foreground">
                   Nomor dialokasikan <span className="font-semibold text-foreground">atomik</span> saat tombol ditekan — preview bukan reservasi.
                 </p>
+                {draftPreview.data && !draftPreview.data.available && (
+                  <div className="w-full flex items-start gap-2 rounded-lg border border-gold/40 bg-gold-soft/70 px-3 py-2">
+                    <AlertTriangle className="w-3.5 h-3.5 text-gold-dark shrink-0 mt-0.5" />
+                    <p className="text-[12px] text-foreground/80 leading-relaxed">
+                      Surat ini <span className="font-semibold">belum bisa diterbitkan</span>: {draftPreview.data.reason}.
+                      Field nomor tidak muncul pada formulir sampai profil penomoran unit ini diaktifkan.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
@@ -449,6 +499,20 @@ export function LetterDetail({ letterId, onClose }: { letterId: string | null; o
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Ubah draft (v1.6.1): koreksi pilihan Dropdown + metadata sebelum terbit.
+          Endpoint PATCH sudah ada sejak v1.6 — kini UI-nya tersedia juga. */}
+      {l?.status === 'DRAFT' && (
+        <EditDraftDialog
+          open={editOpen}
+          letter={l}
+          fieldsSpec={draftPreview.data?.fields ?? []}
+          specUnavailable={!!draftPreview.data && !draftPreview.data.available}
+          specLoading={draftPreview.isLoading}
+          onClose={() => setEditOpen(false)}
+          onSaved={() => { invalidate(); qc.invalidateQueries({ queryKey: ['preview'] }) }}
+        />
+      )}
     </Dialog>
   )
 }
@@ -473,11 +537,13 @@ function DetailItem({ icon: Icon, label, value, full }: {
  * Tampilan pilihan Dropdown surat (v1.6):
  * - Surat terbit: label + kode dari snapshot penerbitan (E.7 — tidak berubah
  *   meski konfigurasi profil kemudian diedit).
+ * - Draft baru: label manusiawi dari spesifikasi profil aktif (draftLabels);
+ *   fallback key teknis bila profil telah berganti sejak draft dibuat.
  * - Surat lama/import: fallback kolom legacy direction (Internal/Eksternal).
- * - Draft baru: pilihan tersimpan sebagai fieldKey → optionId.
  */
-function FieldValuesDisplay({ letter }: {
+function FieldValuesDisplay({ letter, draftLabels }: {
   letter: { direction: string | null; fieldValues: string | null; numberSnapshot: string | null }
+  draftLabels?: string[] | null
 }) {
   // 1) Snapshot penerbitan: label lengkap + kode
   try {
@@ -489,19 +555,24 @@ function FieldValuesDisplay({ letter }: {
       if (fv && Object.keys(fv).length > 0) {
         const items = Object.values(fv)
         return (
-          <DetailItem icon={Building2} label={items.length === 1 ? 'Atribut surat' : 'Atribut surat'}
+          <DetailItem icon={Building2} label="Atribut surat"
             value={items.map(v => `${v.label} (${v.code})`).join(' · ')} />
         )
       }
     }
   } catch { /* snapshot rusak → fallback */ }
-  // 2) Draft v1.6: tampilkan pilihan teknis
+  // 2) Draft v1.6: label manusiawi bila spesifikasi profil tersedia
+  if (draftLabels && draftLabels.length > 0) {
+    return <DetailItem icon={Building2} label="Atribut surat"
+      value={draftLabels.join(' · ')} />
+  }
+  // 2b) Draft tanpa spesifikasi (profil berganti/nonaktif): nilai teknis apa adanya
   try {
     if (letter.fieldValues) {
       const fv = JSON.parse(letter.fieldValues) as Record<string, string>
       const keys = Object.keys(fv)
       if (keys.length > 0) {
-        return <DetailItem icon={Building2} label="Atribut surat (draft)"
+        return <DetailItem icon={Building2} label="Atribut surat"
           value={keys.map(k => `${k}: ${fv[k]}`).join(' · ')} />
       }
     }
@@ -612,5 +683,213 @@ function RelatedLettersCard({ refs, incomingCount, related, relatedLoading }: {
         )}
       </CardContent>
     </Card>
+  )
+}
+
+// ===================== Ubah Draft (v1.6.1) =====================
+
+interface EditableLetter {
+  id: string
+  fieldValues: string | null
+  letterDate: string | null
+  recipient: string | null
+  subject: string | null
+  notes: string | null
+  letterTypeId?: string | null
+  letterType?: { id: string; code: string; name: string } | null
+}
+
+/**
+ * Dialog koreksi draft sebelum terbit: pilihan Dropdown dinamis (dari profil
+ * aktif), tanggal surat, jenis surat, penerima, perihal, dan catatan.
+ * Backend (PATCH /api/letters/[id]) menerima seluruh field ini untuk DRAFT dan
+ * menolak perubahan komponen nomor setelah surat terbit (IMMUTABLE_COMPONENT).
+ */
+function EditDraftDialog({ open, letter, fieldsSpec, specUnavailable, specLoading, onClose, onSaved }: {
+  open: boolean
+  letter: EditableLetter
+  fieldsSpec: DynFieldSpec[]
+  specUnavailable: boolean
+  specLoading: boolean
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const stored = useMemo<Record<string, string>>(() => {
+    try {
+      if (!letter.fieldValues) return {}
+      const fv = JSON.parse(letter.fieldValues) as Record<string, string>
+      return fv && typeof fv === 'object' ? fv : {}
+    } catch { return {} }
+  }, [letter.fieldValues])
+
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({})
+  const [letterDate, setLetterDate] = useState('')
+  const [letterTypeId, setLetterTypeId] = useState('')
+  const [recipient, setRecipient] = useState('')
+  const [subject, setSubject] = useState('')
+  const [notes, setNotes] = useState('')
+  const [lastOpen, setLastOpen] = useState(false)
+
+  // Prefill setiap kali dialog dibuka (data draft bisa berubah dua arah)
+  if (open && !lastOpen) {
+    setLastOpen(true)
+    setFieldValues(stored)
+    setLetterDate(letter.letterDate ? letter.letterDate.slice(0, 10) : '')
+    setLetterTypeId(letter.letterTypeId ?? letter.letterType?.id ?? '')
+    setRecipient(letter.recipient ?? '')
+    setSubject(letter.subject ?? '')
+    setNotes(letter.notes ?? '')
+  }
+  if (!open && lastOpen) setLastOpen(false)
+
+  const letterTypes = useQuery({
+    queryKey: ['letter-types'],
+    queryFn: () => apiGet<{ letterTypes: { id: string; code: string; name: string; category: string | null; isActive: boolean }[] }>('/api/letter-types'),
+    enabled: open,
+  })
+
+  const dynMissing = fieldsSpec.filter(f =>
+    (f.required || f.inNumber) && !fieldValues[f.key] && !f.defaultOptionId)
+  const canSave = letterDate && letterTypeId && dynMissing.length === 0
+
+  const save = useMutation({
+    mutationFn: () => apiPatch(`/api/letters/${letter.id}`, {
+      fieldValues: Object.fromEntries(Object.entries(fieldValues).filter(([, v]) => v)),
+      letterDate,
+      letterTypeId,
+      recipient: recipient || null,
+      subject: subject || null,
+      notes: notes || null,
+    }),
+    onSuccess: () => {
+      toast.success('Draft diperbarui')
+      onSaved()
+      onClose()
+    },
+    onError: (e) => toast.error((e as Error).message),
+  })
+
+  const selectedType = letterTypes.data?.letterTypes.find(t => t.id === letterTypeId)
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto scrollbar-slim">
+        <DialogHeader>
+          <DialogTitle className="font-display text-xl flex items-center gap-2">
+            <Pencil className="w-5 h-5 text-emerald" /> Ubah Draft
+          </DialogTitle>
+          <DialogDescription>
+            Koreksi data sebelum nomor diterbitkan. Setelah terbit, komponen nomor tidak dapat diubah.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {specUnavailable && (
+            <div className="rounded-xl border border-gold/40 bg-gold-soft p-4 flex gap-3">
+              <AlertTriangle className="w-4 h-4 text-gold-dark shrink-0 mt-0.5" />
+              <p className="text-[12px] text-foreground/80 leading-relaxed">
+                Tidak ada profil penomoran aktif untuk konteks surat ini — field nomor tidak
+                bisa ditampilkan. Surat tetap bisa disimpan, tetapi belum bisa diterbitkan.
+              </p>
+            </div>
+          )}
+
+          {/* Field formulir dinamis dari profil aktif */}
+          {fieldsSpec.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {fieldsSpec.map((f) => (
+                <div key={f.key} className="space-y-1.5">
+                  <Label htmlFor={`ef-${f.key}`} className="text-[12px] font-semibold flex items-center gap-1 flex-wrap">
+                    {f.label}
+                    {(f.required || f.inNumber) && <span className="text-destructive">*</span>}
+                    {!f.inNumber && <span className="text-[10px] font-normal text-muted-foreground">(metadata)</span>}
+                  </Label>
+                  <Select
+                    value={fieldValues[f.key] || f.defaultOptionId || ''}
+                    onValueChange={(v) => setFieldValues(prev => ({ ...prev, [f.key]: v }))}>
+                    <SelectTrigger id={`ef-${f.key}`} className="bg-surface">
+                      <SelectValue placeholder={f.placeholder || 'Pilih nilai'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {f.options.map((o) => (
+                        <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {f.helperText && <p className="text-[10.5px] text-muted-foreground">{f.helperText}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+          {specLoading && fieldsSpec.length === 0 && (
+            <p className="text-[12px] text-muted-foreground">Memuat field nomor…</p>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-[12px] font-semibold flex items-center gap-1.5">
+                <CalendarDays className="w-3.5 h-3.5 text-muted-foreground" /> Tanggal surat
+              </Label>
+              <Input type="date" value={letterDate} className="bg-surface" onChange={(e) => setLetterDate(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[12px] font-semibold flex items-center gap-1">
+                Jenis surat <LetterTypeInfo selected={selectedType as never} />
+              </Label>
+              <Select value={letterTypeId || ''} onValueChange={setLetterTypeId}>
+                <SelectTrigger className="bg-surface"><SelectValue placeholder="Pilih jenis" /></SelectTrigger>
+                <SelectContent>
+                  {(() => {
+                    const active = (letterTypes.data?.letterTypes ?? []).filter(t => t.isActive)
+                    const groups = new Map<string, typeof active>()
+                    for (const t of active) {
+                      const key = t.category || 'Lainnya'
+                      if (!groups.has(key)) groups.set(key, [])
+                      groups.get(key)!.push(t)
+                    }
+                    return [...groups.entries()].map(([category, items]) => (
+                      <SelectGroup key={category}>
+                        <SelectLabel className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{category}</SelectLabel>
+                        {items.map((t) => (
+                          <SelectItem key={t.id} value={t.id}>{t.name} ({t.code})</SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ))
+                  })()}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="ef-recipient" className="text-[12px] font-semibold flex items-center gap-1.5">
+              <User className="w-3.5 h-3.5 text-muted-foreground" /> Penerima / instansi tujuan
+            </Label>
+            <Input id="ef-recipient" value={recipient} onChange={(e) => setRecipient(e.target.value)} className="bg-surface"
+              placeholder="mis. Kepala MI Darussalam" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ef-subject" className="text-[12px] font-semibold flex items-center gap-1.5">
+              <MessageSquareText className="w-3.5 h-3.5 text-muted-foreground" /> Perihal
+            </Label>
+            <Input id="ef-subject" value={subject} onChange={(e) => setSubject(e.target.value)} className="bg-surface"
+              placeholder="mis. Permohonan izin kegiatan" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ef-notes" className="text-[12px] font-semibold flex items-center gap-1.5">
+              <StickyNote className="w-3.5 h-3.5 text-muted-foreground" /> Catatan (opsional)
+            </Label>
+            <Textarea id="ef-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="bg-surface resize-none" />
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose}>Batal</Button>
+          <Button disabled={!canSave || save.isPending} onClick={() => save.mutate()} className="shadow-card min-w-32">
+            {save.isPending ? 'Menyimpan…' : 'Simpan Perubahan'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
