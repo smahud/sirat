@@ -63,11 +63,18 @@ export async function GET(req: NextRequest) {
 
     // Resolusi profil aktif (v1.8 multi-profil): kandidat = profil panitia (bila
     // ada) lalu profil unit; profileId eksplisit memilih salah satunya.
+    // v1.9: profil terarsip bukan kandidat — beri pesan spesifik bila operator
+    // membuka draft yang memilih profil yang kini sudah diarsipkan.
     const candidates = await activeProfileCandidates(db, unitId, committee?.id ?? null)
     let activeVersion: ActiveProfileCandidate | undefined
     if (profileId) {
       activeVersion = candidates.find(c => c.profileId === profileId)
       if (!activeVersion) {
+        const chosen = await db.numberingProfile.findUnique({ where: { id: profileId } })
+        if (chosen?.archivedAt) {
+          return fail(409, 'PROFILE_ARCHIVED',
+            `Profil penomoran "${chosen.name}" sudah diarsipkan — pilih profil lain (profil dapat dipulihkan admin lewat menu Arsip Profil)`)
+        }
         return fail(404, 'PROFILE_NOT_AVAILABLE',
           'Profil penomoran tidak tersedia untuk konteks ini — muat ulang formulir dan pilih ulang profil')
       }
@@ -113,7 +120,9 @@ export async function GET(req: NextRequest) {
       issueDate: new Date(),
     }
 
-    // Estimasi sequence: lastValue+1 jika namespace ada; TIDAK dialokasikan
+    // Estimasi sequence: lastValue+1 jika counter periode sudah ada; TIDAK dialokasikan.
+    // v1.9: counter belum ada → estimasi mulai dari startCounter profil (bukan 1)
+    // agar preview nomor terusan akurat sejak surat pertama.
     let estimatedSeq: number | undefined
     if (ns) {
       const periodKey = periodKeyFor(
@@ -124,7 +133,9 @@ export async function GET(req: NextRequest) {
       const counter = await db.counter.findUnique({
         where: { namespaceId_periodKey: { namespaceId: ns.id, periodKey } },
       })
-      estimatedSeq = (counter?.lastValue ?? 0) + 1
+      estimatedSeq = counter
+        ? counter.lastValue + 1
+        : Math.max(1, dsl.policy?.startCounter ?? 1)
     }
 
     try {

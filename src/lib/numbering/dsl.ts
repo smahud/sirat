@@ -73,6 +73,10 @@ export type DSLComponent = z.infer<typeof componentSchema>
 const policySchema = z.object({
   resetPolicy: z.enum(RESET_POLICIES).optional(),
   dateSource: z.enum(DATE_SOURCES).optional(),
+  // v1.9: nomor urut pertama profil ini (default 1). Dipakai saat counter BARU
+  // dibuat (namespace/periode baru) — memungkinkan nomor terusan dari sistem lama
+  // (mis. penomoran kertas berhenti di 024 → startCounter 25).
+  startCounter: z.number().int().min(1).max(9_999_999).optional(),
 })
 export type NumberingPolicy = z.infer<typeof policySchema>
 

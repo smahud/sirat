@@ -163,11 +163,12 @@ model NumberingProfile {
   owner       Unit     @relation(fields: [ownerId], references: [id])
   committeeId String? // v1.8: satu konteks boleh punya BEBERAPA profil (unit maupun kepanitiaan)
   committee   Committee? @relation(fields: [committeeId], references: [id])
+  archivedAt  DateTime? // v1.9: terisi = profil diarsipkan (disembunyikan, bisa dipulihkan)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   versions        NumberingProfileVersion[]
-  chosenByLetters Letter[] @relation("LetterChosenProfile")
+  chosenByLetters Letter[] @relation("LetterChosenProfile") // surat yang memilih profil ini eksplisit (v1.8)
 }
 
 model NumberingProfileVersion {
@@ -233,7 +234,7 @@ model Letter {
   normalizedNumber String? // canonical uppercase utk deteksi tabrakan; unique (null utk draft)
   profileVersionId String?
   profileVersion  NumberingProfileVersion? @relation("LetterProfile", fields: [profileVersionId], references: [id])
-  numberingProfileId String? // v1.8: profil yang dipilih operator saat membuat draft
+  numberingProfileId String? // v1.8: profil yang dipilih operator saat membuat draft (resolusi versi aktif tetap saat terbit)
   numberingProfile  NumberingProfile? @relation("LetterChosenProfile", fields: [numberingProfileId], references: [id])
   numberSnapshot  String? // JSON: komponen, input, kode saat terbit
   direction       String? // LEGACY v1 (INTERNAL|EXTERNAL) — beku utk histori; surat baru memakai fieldValues

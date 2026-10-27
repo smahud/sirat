@@ -6,7 +6,7 @@ import { LoginView } from './login-view'
 import { DashboardView } from './dashboard-view'
 import { LettersView } from './letters-view'
 import { UnitsView } from './units-view'
-import { ProfilesView } from './profiles-view'
+import { ProfilesView, ProfileArchiveView } from './profiles-view'
 import { UsersView } from './users-view'
 import { LetterTypesView } from './letter-types-view'
 import { AuditView, HealthView } from './audit-health-views'
@@ -17,10 +17,10 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
   FileText, LayoutDashboard, Building2, SlidersHorizontal, Users, ScrollText,
-  HeartPulse, FileSpreadsheet, Settings, LogOut, Loader2, X, FileStack, DatabaseBackup,
+  HeartPulse, FileSpreadsheet, Settings, LogOut, Loader2, X, FileStack, DatabaseBackup, Archive,
 } from 'lucide-react'
 
-type ViewKey = 'dashboard' | 'letters' | 'units' | 'profiles' | 'lettertypes' | 'users' | 'backup' | 'audit' | 'health' | 'import' | 'settings'
+type ViewKey = 'dashboard' | 'letters' | 'units' | 'profiles' | 'profilearchive' | 'lettertypes' | 'users' | 'backup' | 'audit' | 'health' | 'import' | 'settings'
 
 interface NavItem {
   key: ViewKey
@@ -52,6 +52,8 @@ const NAV_SECTIONS: NavSection[] = [
       // ke bawah tidak punya akses — menu tidak dimunculkan sama sekali
       // (GET /api/numbering-profiles juga menolak 403).
       { key: 'profiles', label: 'Profil Nomor', icon: SlidersHorizontal, perm: 'profile.manage' },
+      // v1.9: arsip profil — profil terpakai disembunyikan, bukan dihapus fisik
+      { key: 'profilearchive', label: 'Arsip Profil', icon: Archive, perm: 'profile.manage' },
       { key: 'lettertypes', label: 'Jenis Surat', icon: FileStack, perm: 'lettertype.manage' },
       { key: 'users', label: 'Pengguna', icon: Users, perm: 'user.manage' },
     ],
@@ -76,6 +78,7 @@ const VIEW_PERMS: Partial<Record<ViewKey, string>> = {
   letters: 'letter.view',
   units: 'committee.manage',
   profiles: 'profile.manage',
+  profilearchive: 'profile.manage',
   lettertypes: 'lettertype.manage',
   users: 'user.manage',
   audit: 'audit.view',
@@ -221,7 +224,7 @@ export function AppShell() {
             </Button>
           </div>
           <p className="mt-2.5 text-center text-[10px] text-white/30">
-            YAPSI Darussalam · v1.7
+            YAPSI Darussalam · v1.9
           </p>
         </div>
       </aside>
@@ -292,6 +295,7 @@ function MainContent({ view, me, onProfileUpdated, onNavigate }: {
     case 'letters': return <LettersView onNavigate={onNavigate} />
     case 'units': return <UnitsView canManage={hasPerm(me.permissions, 'committee.manage')} />
     case 'profiles': return <ProfilesView />
+    case 'profilearchive': return <ProfileArchiveView />
     case 'lettertypes': return <LetterTypesView />
     case 'users': return <UsersView />
     case 'backup': return <BackupView me={me} />

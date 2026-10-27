@@ -36,17 +36,21 @@ export async function activeProfileCandidates(
   unitId: string,
   committeeId: string | null,
 ): Promise<ActiveProfileCandidate[]> {
+  // v1.9: profil terarsip (archivedAt terisi) tidak pernah jadi kandidat —
+  // otomatis keluar dari selector Buat Surat, validasi POST/PATCH letters,
+  // dan preview, karena semuanya berpangkal pada fungsi ini.
+  const notArchived = { archivedAt: null } satisfies Prisma.NumberingProfileWhereInput
   // Versi aktif profil KEPANITIAAN (hanya bila konteks kepanitiaan)
   const committeeVersions = committeeId
     ? await db.numberingProfileVersion.findMany({
-        where: { status: 'ACTIVE', profile: { committeeId } },
+        where: { status: 'ACTIVE', profile: { committeeId, ...notArchived } },
         orderBy: [{ profile: { createdAt: 'asc' } }, { version: 'desc' }],
         include: { profile: { select: { id: true, name: true, createdAt: true } } },
       })
     : []
   // Versi aktif profil UNIT (committeeId null)
   const unitVersions = await db.numberingProfileVersion.findMany({
-    where: { status: 'ACTIVE', profile: { ownerId: unitId, committeeId: null } },
+    where: { status: 'ACTIVE', profile: { ownerId: unitId, committeeId: null, ...notArchived } },
     orderBy: [{ profile: { createdAt: 'asc' } }, { version: 'desc' }],
     include: { profile: { select: { id: true, name: true, createdAt: true } } },
   })
@@ -94,6 +98,7 @@ export async function resolveActiveVersionForLetter(
         status: 'ACTIVE',
         profile: {
           id: letter.numberingProfileId,
+          archivedAt: null, // v1.9: profil terarsip tidak bisa menerbitkan surat
           // profil tidak bisa berpindah pemilik (PATCH hanya nama) — cek konteks
           // tetap dipertahankan demi defense in depth.
           ...(letter.committeeId

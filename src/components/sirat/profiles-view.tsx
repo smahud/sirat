@@ -15,7 +15,7 @@ import { toast } from 'sonner'
 import {
   ArrowDown, ArrowUp, Plus, Trash2, Pencil, SlidersHorizontal, Hash, CheckCircle2, Info,
   Layers, ShieldCheck, ChevronDown, ChevronUp, Copy, Settings2, ArrowLeft, CircleAlert,
-  ListPlus, GripVertical, Save, Rocket, CircleCheck, Table2,
+  ListPlus, GripVertical, Save, Rocket, CircleCheck, Table2, Archive, ArchiveRestore, Inbox,
 } from 'lucide-react'
 import {
   type NumberingDSL, type DSLComponent, type DropdownField, type DropdownOption,
@@ -31,6 +31,8 @@ interface ProfileRow {
   committeeId: string | null
   owner: { id: string; code: string; name: string }
   committee: { id: string; code: string; name: string } | null
+  archivedAt: string | null // v1.9: terisi = profil di arsip
+  letterCount: number // v1.9: jumlah surat ber-histori (dasar hapus vs arsip)
   versions: { id: string; version: number; status: string; activatedAt: string | null; dsl: string }[]
 }
 interface UnitRow { id: string; code: string; name: string }
@@ -55,10 +57,26 @@ export function ProfilesView() {
   const [activateVersion, setActivateVersion] = useState<ProfileRow['versions'][0] | null>(null)
   const [renameProfile, setRenameProfile] = useState<ProfileRow | null>(null)
   const [deleteProfile, setDeleteProfile] = useState<ProfileRow | null>(null)
+  const [archiveProfile, setArchiveProfile] = useState<ProfileRow | null>(null)
 
   const profiles = useQuery({ queryKey: ['profiles'], queryFn: () => apiGet<{ profiles: ProfileRow[] }>('/api/numbering-profiles') })
   const units = useQuery({ queryKey: ['units'], queryFn: () => apiGet<{ units: UnitRow[] }>('/api/units') })
   const committees = useQuery({ queryKey: ['committees'], queryFn: () => apiGet<{ committees: CommitteeRow[] }>('/api/committees') })
+
+  const invalidateAll = () => {
+    qc.invalidateQueries({ queryKey: ['profiles'] })
+    qc.invalidateQueries({ queryKey: ['profiles-archived'] })
+  }
+
+  const archive = useMutation({
+    mutationFn: (id: string) => apiPost('/api/numbering-profiles/archive', { id }),
+    onSuccess: () => {
+      toast.success('Profil dipindahkan ke arsip — tersembunyi dari daftar & form surat, bisa dipulihkan')
+      setArchiveProfile(null)
+      invalidateAll()
+    },
+    onError: (e) => toast.error((e as Error).message),
+  })
 
   const activate = useMutation({
     mutationFn: ({ versionId, resetPolicy, dateSource }: { versionId: string; resetPolicy: string; dateSource: string }) =>
@@ -67,7 +85,7 @@ export function ProfilesView() {
       toast.success('Versi profil diaktifkan')
       setActivateVersion(null)
       setBuilder(null) // v1.6: tutup builder setelah aktivasi berhasil
-      qc.invalidateQueries({ queryKey: ['profiles'] })
+      invalidateAll()
     },
     onError: (e) => toast.error((e as Error).message),
   })
@@ -164,6 +182,11 @@ export function ProfilesView() {
                 <Badge variant="outline" className="font-medium text-[11px]">
                   {p.committee ? `Panitia ${p.committee.code}` : `Unit ${p.owner.code}`}
                 </Badge>
+                {p.letterCount > 0 && (
+                  <Badge variant="outline" className="text-[11px] text-emerald-deep border-emerald/40" title="Jumlah surat ber-histori dengan profil ini">
+                    {p.letterCount} surat
+                  </Badge>
+                )}
                 <span className="ml-auto flex items-center gap-1.5">
                   <Button size="icon" variant="ghost" className="h-8 w-8" title="Ubah nama profil"
                     onClick={() => setRenameProfile(p)} aria-label="Ubah nama profil">
@@ -179,6 +202,10 @@ export function ProfilesView() {
                       })
                     }} aria-label="Buat versi baru">
                     <Layers className="w-4 h-4" />
+                  </Button>
+                  <Button size="icon" variant="ghost" className="h-8 w-8 text-foreground/60 hover:bg-amber-50 hover:text-amber-700"
+                    title="Arsipkan profil (sembunyikan, bisa dipulihkan)" onClick={() => setArchiveProfile(p)} aria-label="Arsipkan profil">
+                    <Archive className="w-4 h-4" />
                   </Button>
                   <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive hover:bg-red-50"
                     title="Hapus profil" onClick={() => setDeleteProfile(p)} aria-label="Hapus profil">
@@ -259,14 +286,22 @@ export function ProfilesView() {
       <RenameDialog
         profile={renameProfile}
         onClose={() => setRenameProfile(null)}
-        onSaved={() => { setRenameProfile(null); qc.invalidateQueries({ queryKey: ['profiles'] }) }}
+        onSaved={() => { setRenameProfile(null); invalidateAll() }}
       />
 
-      {/* ==== Delete (guarded) ==== */}
+      {/* ==== Arsipkan (v1.9) ==== */}
+      <ArchiveDialog
+        profile={archiveProfile}
+        busy={archive.isPending}
+        onConfirm={() => archiveProfile && archive.mutate(archiveProfile.id)}
+        onClose={() => setArchiveProfile(null)}
+      />
+
+      {/* ==== Hapus (adaptif: permanen / pindah arsip) ==== */}
       <DeleteDialog
         profile={deleteProfile}
         onClose={() => setDeleteProfile(null)}
-        onSaved={() => { setDeleteProfile(null); qc.invalidateQueries({ queryKey: ['profiles'] }) }}
+        onSaved={() => { setDeleteProfile(null); invalidateAll() }}
       />
     </div>
   )
@@ -302,15 +337,16 @@ function ActivateForm({ version, onSubmit, busy }: {
 }) {
   // v1.6: prefill dari saran kebijakan yang tersimpan pada DSL builder (D.3)
   const hint = useMemo(() => {
-    if (!version) return { resetPolicy: 'ALL', dateSource: 'LETTER_DATE' }
+    if (!version) return { resetPolicy: 'ALL', dateSource: 'LETTER_DATE', startCounter: 1 }
     try {
       const dsl = parseDsl(version.dsl)
       return {
         resetPolicy: dsl.policy?.resetPolicy ?? 'ALL',
         dateSource: dsl.policy?.dateSource ?? 'LETTER_DATE',
+        startCounter: dsl.policy?.startCounter ?? 1,
       }
     } catch {
-      return { resetPolicy: 'ALL', dateSource: 'LETTER_DATE' }
+      return { resetPolicy: 'ALL', dateSource: 'LETTER_DATE', startCounter: 1 }
     }
   }, [version])
   const [resetPolicy, setResetPolicy] = useState(hint.resetPolicy)
@@ -351,6 +387,14 @@ function ActivateForm({ version, onSubmit, busy }: {
             <SelectItem value="ISSUE_DATE">Waktu penerbitan</SelectItem>
           </SelectContent>
         </Select>
+      </div>
+      {/* v1.9: info nomor awal counter dari konfigurasi profil (bukan keputusan aktivasi) */}
+      <div className="rounded-lg border border-emerald/25 bg-emerald-soft/40 p-3 flex items-center gap-2.5">
+        <Hash className="w-4 h-4 text-emerald shrink-0" />
+        <p className="text-[12px] text-foreground/75">
+          Nomor awal counter profil ini: <span className="font-semibold font-mono">{hint.startCounter}</span>
+          {hint.startCounter > 1 && ' (terusan)'} — surat pertama pada counter baru akan bernomor urut tersebut.
+        </p>
       </div>
       <DialogFooter>
         <Button onClick={() => onSubmit(resetPolicy, dateSource)} disabled={busy} className="shadow-card min-w-28">
@@ -408,42 +452,96 @@ function RenameDialog({ profile, onClose, onSaved }: {
   )
 }
 
+/** Dialog arsip manual (v1.9): sembunyikan profil aktif-daftar tanpa menghapus. */
+function ArchiveDialog({ profile, busy, onConfirm, onClose }: {
+  profile: ProfileRow | null
+  busy: boolean
+  onConfirm: () => void
+  onClose: () => void
+}) {
+  if (!profile) return null
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="font-display text-lg flex items-center gap-2">
+            <span className="w-8 h-8 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center"><Archive className="w-4 h-4" /></span>
+            Arsipkan Profil?
+          </DialogTitle>
+          <DialogDescription>
+            Profil <span className="font-semibold">{profile.name}</span>
+            {' '}({profile.committee ? `Panitia ${profile.committee.code}` : `Unit ${profile.owner.code}`})
+            {' '}akan disembunyikan dari daftar utama dan pilihan profil saat membuat surat.
+            Histori tetap utuh dan profil dapat dipulihkan kapan saja lewat menu <span className="font-semibold">Arsip Profil</span>.
+            {profile.versions.some(v => v.status === 'ACTIVE') && (
+              <>{' '}Draft surat yang masih memilih profil ini akan diminta memilih profil lain saat diterbitkan.</>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose}>Batal</Button>
+          <Button disabled={busy} onClick={onConfirm} className="shadow-card min-w-28">
+            {busy ? 'Mengarsipkan…' : 'Ya, Arsipkan'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/**
+ * Dialog hapus adaptif (v1.9):
+ * - 0 surat ber-histori → hapus PERMANEN beserta seluruh versinya.
+ * - ≥1 surat → profil dipindahkan ke ARSIP (bukan dihapus) — histori tak boleh putus.
+ */
 function DeleteDialog({ profile, onClose, onSaved }: {
   profile: ProfileRow | null
   onClose: () => void
   onSaved: () => void
 }) {
   const del = useMutation({
-    mutationFn: () => apiDelete(`/api/numbering-profiles?id=${profile!.id}`),
-    onSuccess: () => { toast.success('Profil dihapus'); onSaved() },
+    mutationFn: () => apiDelete<{ archived?: boolean; deleted?: boolean; letterCount?: number }>(
+      `/api/numbering-profiles?id=${profile!.id}`),
+    onSuccess: (data) => {
+      toast.success(data.archived
+        ? `Profil memiliki histori (${data.letterCount} surat) — dipindahkan ke ARSIP, bisa dipulihkan`
+        : 'Profil dihapus permanen')
+      onSaved()
+    },
     onError: (e) => toast.error((e as Error).message),
   })
-  const hasActive = !!profile?.versions.some(v => v.status === 'ACTIVE')
+  if (!profile) return null
+  const hasHistory = profile.letterCount > 0
   return (
-    <Dialog open={!!profile} onOpenChange={(v) => !v && onClose()}>
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle className="font-display text-lg flex items-center gap-2">
             <span className="w-8 h-8 rounded-lg bg-red-50 text-destructive flex items-center justify-center"><Trash2 className="w-4 h-4" /></span>
-            Hapus Profil?
+            {hasHistory ? 'Pindahkan ke Arsip?' : 'Hapus Profil?'}
           </DialogTitle>
           <DialogDescription>
-            {profile && (
+            Profil <span className="font-semibold">{profile.name}</span>
+            {' '}({profile.committee ? `Panitia ${profile.committee.code}` : `Unit ${profile.owner.code}`}).{' '}
+            {hasHistory ? (
               <>
-                Profil <span className="font-semibold">{profile.name}</span>
-                {' '}({profile.committee ? `Panitia ${profile.committee.code}` : `Unit ${profile.owner.code}`})
-                {hasActive
-                  ? ' masih memiliki versi AKTIF — unit/panitia ini sedang memakainya untuk menerbitkan surat. '
-                  : ' beserta seluruh versinya akan dihapus. '}
-                Penghapusan diblokir sistem bila profil masih aktif atau memiliki histori penomoran.
+                Profil ini sudah dipakai <span className="font-semibold">{profile.letterCount} surat</span> — menghapus fisik akan
+                memutus histori penomoran, sehingga sistem memindahkannya ke <span className="font-semibold">Arsip Profil</span>:
+                tersembunyi dari daftar & form surat, dapat dipulihkan kapan saja.
+              </>
+            ) : (
+              <>
+                Profil belum pernah dipakai surat mana pun — profil beserta seluruh versinya akan
+                <span className="font-semibold"> dihapus permanen</span>. Tindakan ini tidak bisa dibatalkan.
               </>
             )}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button variant="destructive" disabled={del.isPending || hasActive} onClick={() => del.mutate()}>
-            {del.isPending ? 'Menghapus…' : 'Ya, Hapus'}
+          <Button variant={hasHistory ? 'default' : 'destructive'} disabled={del.isPending} onClick={() => del.mutate()}
+            className={hasHistory ? 'shadow-card min-w-28' : 'min-w-28'}>
+            {del.isPending ? 'Memproses…' : hasHistory ? 'Ya, Pindahkan ke Arsip' : 'Ya, Hapus Permanen'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -465,6 +563,7 @@ interface EditorState {
   components: DSLComponent[]
   resetPolicy: string
   dateSource: string
+  startCounter: number // v1.9: nomor urut pertama (default 1; >1 = terusan)
   example: {
     letterTypeCode: string
     unitCode: string
@@ -534,8 +633,12 @@ function ProfileBuilderPage({ ctx, units, committees, onClose, onSaved, onActiva
     separator: st.separator as NumberingDSL['separator'],
     fields: st.fields,
     components: st.components,
-    policy: { resetPolicy: st.resetPolicy as never, dateSource: st.dateSource as never },
-  }), [st.separator, st.fields, st.components, st.resetPolicy, st.dateSource])
+    policy: {
+      resetPolicy: st.resetPolicy as never,
+      dateSource: st.dateSource as never,
+      startCounter: st.startCounter,
+    },
+  }), [st.separator, st.fields, st.components, st.resetPolicy, st.dateSource, st.startCounter])
 
   const validation = useMemo(() => validateDslForActivation(dsl), [dsl])
 
@@ -571,7 +674,7 @@ function ProfileBuilderPage({ ctx, units, committees, onClose, onSaved, onActiva
   const currentSnapshot = JSON.stringify({
     name: st.name, ownerId: st.ownerId, committeeId: st.committeeId,
     separator: st.separator, fields: st.fields, components: st.components,
-    resetPolicy: st.resetPolicy, dateSource: st.dateSource,
+    resetPolicy: st.resetPolicy, dateSource: st.dateSource, startCounter: st.startCounter,
   })
   const dirty = savedSnapshot !== '' && savedSnapshot !== currentSnapshot
   const metadataFields = st.fields.filter(f => !fieldUsedInNumber(dsl, f.key))
@@ -612,7 +715,7 @@ function ProfileBuilderPage({ ctx, units, committees, onClose, onSaved, onActiva
       '/api/numbering-profiles/validate', {
         dsl,
         sample: {
-          seq: 1,
+          seq: Math.max(1, st.startCounter), // v1.9: contoh mengikuti nomor awal counter
           letterTypeCode: st.example.letterTypeCode || 'SPR',
           unitCode: st.example.unitCode || 'YAPSI',
           committeeCode: st.example.committeeCode || undefined,
@@ -1035,6 +1138,21 @@ function ProfileBuilderPage({ ctx, units, committees, onClose, onSaved, onActiva
                   <p className="text-[10.5px] text-muted-foreground">Menentukan periode reset (YEARLY/MONTHLY) mengikuti tanggal surat atau waktu terbit.</p>
                 </div>
               </div>
+              {/* v1.9: nomor awal counter — dukungan profil terusan dari sistem lama */}
+              <div className="space-y-1.5">
+                <Label htmlFor="pb-startctr" className="text-[12px] font-semibold">Nomor awal counter</Label>
+                <div className="flex items-center gap-2.5">
+                  <Input id="pb-startctr" className="bg-surface w-32" type="number" min={1} max={9999999}
+                    value={st.startCounter}
+                    onChange={(e) => patch({ startCounter: Math.min(9999999, Math.max(1, Math.round(Number(e.target.value) || 1))) })}
+                    aria-label="Nomor awal counter" />
+                  <p className="text-[10.5px] text-muted-foreground flex-1 leading-relaxed">
+                    Urutan pertama profil ini (default 1). Isi nilai <span className="font-semibold">terusan</span> bila melanjutkan penomoran lama —
+                    mis. buku agenda lama berhenti di 024 → isi 25 agar surat pertama bernomor 025.
+                    Berlaku saat counter baru dibuat (awal periode); counter yang sudah berjalan lanjut dari nilai terakhir.
+                  </p>
+                </div>
+              </div>
             </CardContent>
           </Card>
 
@@ -1236,6 +1354,7 @@ function initEditorState(ctx: BuilderCtx, units: UnitRow[]): EditorState {
     components: dsl?.components ?? structuredClone(DEFAULT_COMPONENTS),
     resetPolicy: dsl?.policy?.resetPolicy ?? 'ALL',
     dateSource: dsl?.policy?.dateSource ?? 'LETTER_DATE',
+    startCounter: Math.max(1, Math.round(dsl?.policy?.startCounter ?? 1)),
     example: {
       letterTypeCode: 'SPR',
       unitCode: ownerCode,
@@ -1511,3 +1630,129 @@ function AddComponentMenu({ onAdd, onAddDropdown }: {
 }
 
 
+
+// ===================== Arsip Profil (v1.9) =====================
+
+/**
+ * Menu Arsip Profil — tempat profil "pensiun" yang TIDAK dihapus fisik
+ * karena masih merujuk histori surat. Profil di sini tersembunyi dari
+ * daftar utama dan pilihan profil saat membuat surat; dapat dipulihkan
+ * kapan saja, atau dihapus permanen bila ternyata belum pernah dipakai.
+ */
+export function ProfileArchiveView() {
+  const qc = useQueryClient()
+  const [deleteProfile, setDeleteProfile] = useState<ProfileRow | null>(null)
+
+  const archived = useQuery({
+    queryKey: ['profiles-archived'],
+    queryFn: () => apiGet<{ profiles: ProfileRow[] }>('/api/numbering-profiles?archived=1'),
+  })
+
+  const invalidateAll = () => {
+    qc.invalidateQueries({ queryKey: ['profiles'] })
+    qc.invalidateQueries({ queryKey: ['profiles-archived'] })
+  }
+
+  const unarchive = useMutation({
+    mutationFn: (id: string) => apiPost('/api/numbering-profiles/unarchive', { id }),
+    onSuccess: () => {
+      toast.success('Profil dipulihkan dari arsip — kembali muncul di daftar utama')
+      invalidateAll()
+    },
+    onError: (e) => toast.error((e as Error).message),
+  })
+
+  return (
+    <div>
+      <PageHeader
+        title="Arsip Profil"
+        description="Profil penomoran yang disembunyikan tanpa menghapus histori — di sini profil lama tidak menjadi sampah, tetapi tetap bisa ditelusuri dan dipulihkan."
+      />
+
+      <div className="rounded-xl border border-emerald/25 bg-emerald-soft/40 p-4 mb-5 flex gap-3.5">
+        <Inbox className="w-[18px] h-[18px] text-emerald shrink-0 mt-0.5" />
+        <p className="text-[12.5px] leading-relaxed text-foreground/80">
+          <span className="font-semibold text-emerald-deep">Kenapa ada arsip?</span> Profil yang sudah pernah dipakai
+          surat tidak boleh dihapus fisik — histori penomoran akan putus. Saat dihapus dari daftar utama, profil
+          seperti itu otomatis dipindahkan ke sini. Profil di arsip <span className="font-semibold">tidak muncul</span> saat
+          membuat surat baru, dan bisa <span className="font-semibold">dipulihkan</span> kapan saja bila diperlukan lagi.
+        </p>
+      </div>
+
+      {archived.data?.profiles.length === 0 && (
+        <Card className="shadow-card">
+          <CardContent className="p-0">
+            <EmptyState
+              icon={Inbox}
+              title="Arsip kosong"
+              description="Belum ada profil terarsip. Profil yang dihapus dari daftar utama padahal sudah dipakai surat akan muncul di sini."
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {archived.data?.profiles.map((p) => {
+        const latest = p.versions[0]
+        const sample = latest ? (() => {
+          try {
+            const dsl = parseDsl(latest.dsl)
+            return dsl.components.map(c => componentToken(c, dsl)).join(dsl.separator)
+          } catch { return '?' }
+        })() : '?'
+        const activeCount = p.versions.filter(v => v.status === 'ACTIVE').length
+        return (
+          <Card key={p.id} className="shadow-card mb-4 opacity-95">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-[15px] font-semibold flex flex-wrap items-center gap-2.5">
+                <span className="w-8 h-8 rounded-lg bg-muted text-muted-foreground flex items-center justify-center">
+                  <Archive className="w-4 h-4" />
+                </span>
+                <span className="truncate max-w-xs" title={p.name}>{p.name}</span>
+                <Badge variant="outline" className="font-medium text-[11px]">
+                  {p.committee ? `Panitia ${p.committee.code}` : `Unit ${p.owner.code}`}
+                </Badge>
+                {p.letterCount > 0 ? (
+                  <Badge variant="outline" className="text-[11px] text-emerald-deep border-emerald/40">
+                    {p.letterCount} surat
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[11px] text-muted-foreground">
+                    belum pernah dipakai
+                  </Badge>
+                )}
+                <span className="ml-auto flex items-center gap-1.5">
+                  <Button size="sm" variant="outline" className="bg-surface h-8"
+                    disabled={unarchive.isPending} onClick={() => unarchive.mutate(p.id)}>
+                    <ArchiveRestore className="w-3.5 h-3.5 mr-1" /> Pulihkan
+                  </Button>
+                  <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive hover:bg-red-50"
+                    title={p.letterCount > 0
+                      ? `Memiliki histori ${p.letterCount} surat — tidak bisa dihapus permanen`
+                      : 'Hapus permanen (belum pernah dipakai)'}
+                    onClick={() => setDeleteProfile(p)} aria-label="Hapus permanen">
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-[12px] font-semibold px-2.5 py-1 rounded-md bg-muted">{sample}</span>
+                <span className="text-[11.5px] text-muted-foreground">
+                  {p.versions.length} versi{activeCount > 0 ? ` · ${activeCount} masih AKTIF (akan langsung bisa dipakai bila dipulihkan)` : ''}
+                  {p.archivedAt ? ` · diarsipkan ${new Date(p.archivedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}` : ''}
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        )
+      })}
+
+      <DeleteDialog
+        profile={deleteProfile}
+        onClose={() => setDeleteProfile(null)}
+        onSaved={() => { setDeleteProfile(null); invalidateAll() }}
+      />
+    </div>
+  )
+}

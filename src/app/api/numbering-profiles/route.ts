@@ -13,20 +13,43 @@ import { canManageUnit, canManageCommittee } from '@/lib/rbac'
  * v1.5: diperketat dari letter.view → profile.manage (kebijakan pusat).
  * Profil penomoran adalah konfigurasi organisasi, bukan konten surat —
  * admin unit ke bawah tidak memiliki akses (menu pun tidak dimunculkan).
+ * v1.9: ?archived=1 → daftar profil TERARSIP saja (menu Arsip Profil);
+ *       default hanya profil aktif-daftar (archivedAt null). Setiap baris
+ *       menyertai letterCount = jumlah surat ber-histori dengan profil ini
+ *       (dasar keputusan hapus permanen vs pindah arsip).
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   return handle(async () => {
     const r = await requirePermission('profile.manage')
     if ('error' in r) return r.error
+    const url = new URL(req.url)
+    const archivedOnly = url.searchParams.get('archived') === '1'
     const profiles = await db.numberingProfile.findMany({
+      where: archivedOnly ? { archivedAt: { not: null } } : { archivedAt: null },
       include: {
         owner: { select: { id: true, code: true, name: true } },
         committee: { select: { id: true, code: true, name: true } },
         versions: { orderBy: { version: 'desc' } },
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: archivedOnly ? { updatedAt: 'desc' } : { createdAt: 'asc' },
     })
-    return ok({ profiles })
+    // Jumlah surat ber-histori per profil (pilihan eksplisit, terbit di versi,
+    // atau berada di namespace versi — termasuk surat import legacy).
+    const withUsage = await Promise.all(profiles.map(async (p) => {
+      const versionIds = p.versions.map(v => v.id)
+      const namespaceIds = p.versions.map(v => v.namespaceId).filter((x): x is string => !!x)
+      const letterCount = await db.letter.count({
+        where: {
+          OR: [
+            { numberingProfileId: p.id },
+            ...(versionIds.length > 0 ? [{ profileVersionId: { in: versionIds } }] : []),
+            ...(namespaceIds.length > 0 ? [{ namespaceId: { in: namespaceIds } }] : []),
+          ],
+        },
+      })
+      return { ...p, letterCount }
+    }))
+    return ok({ profiles: withUsage })
   })
 }
 
@@ -240,12 +263,13 @@ export async function PATCH(req: NextRequest) {
 const deleteSchema = z.object({ id: z.string().min(1) })
 
 /**
- * DELETE /api/numbering-profiles?id= — hapus profil (v1.5, guarded).
- * - Versi ACTIVE ada → 409: profil sedang dipakai penomoran surat baru
- *   (menghapusnya membuat unit/panitia tidak bisa menerbitkan surat).
- * - Ada surat pada namespace versi manapun → 409 HAS_HISTORY:
- *   histori penomoran tidak boleh putus.
- * - Profil DRAFT murni (belum pernah diaktivasi) → boleh dihapus beserta versinya.
+ * DELETE /api/numbering-profiles?id= — hapus profil (v1.9: arsip adaptif).
+ * - BELUM pernah dipakai (0 surat ber-histori) → hapus permanen beserta versinya.
+ *   Termasuk profil ber-versi ACTIVE tanpa histori — tidak ada data yang putus.
+ * - SUDAH pernah dipakai (≥1 surat) → profil TIDAK dihapus fisik, melainkan
+ *   dipindahkan ke ARSIP (archivedAt terisi): hilang dari daftar utama &
+ *   selector Buat Surat, bisa dipulihkan kapan saja dari menu Arsip Profil.
+ *   Histori penomoran tidak boleh putus — profil tetap dirujuk surat terbit.
  */
 export async function DELETE(req: NextRequest) {
   return handle(async () => {
@@ -276,28 +300,48 @@ export async function DELETE(req: NextRequest) {
       return fail(403, 'FORBIDDEN', 'Anda tidak memiliki wewenang menghapus profil ini')
     }
 
-    if (profile.versions.some(v => v.status === 'ACTIVE')) {
-      return fail(409, 'PROFILE_ACTIVE',
-        'Profil masih memiliki versi AKTIF — penerbitan surat konteks ini bergantung padanya. Aktivasi profil lain terlebih dahulu bila ingin mengganti.')
-    }
+    // Histori = surat yang memilih profil ini, terbit pada versinya, atau
+    // berada di namespace versinya (termasuk surat import legacy).
+    const versionIds = profile.versions.map(v => v.id)
     const namespaceIds = profile.versions.map(v => v.namespaceId).filter((x): x is string => !!x)
-    const lettersOnNamespaces = namespaceIds.length > 0
-      ? await db.letter.count({ where: { namespaceId: { in: namespaceIds } } })
-      : 0
-    if (lettersOnNamespaces > 0) {
-      return fail(409, 'HAS_HISTORY',
-        `Profil memiliki histori penomoran (${lettersOnNamespaces} surat) — hapus fisik diblokir demi kesinambungan histori.`)
+    const letterCount = await db.letter.count({
+      where: {
+        OR: [
+          { numberingProfileId: id },
+          ...(versionIds.length > 0 ? [{ profileVersionId: { in: versionIds } }] : []),
+          ...(namespaceIds.length > 0 ? [{ namespaceId: { in: namespaceIds } }] : []),
+        ],
+      },
+    })
+
+    // Pernah dipakai → arsipkan (bisa dipulihkan), jangan hapus fisik.
+    if (letterCount > 0) {
+      if (!profile.archivedAt) {
+        await db.$transaction(async (tx) => {
+          await tx.numberingProfile.update({ where: { id }, data: { archivedAt: new Date() } })
+          await writeAudit(tx, {
+            actorId: r.user.id, action: 'profile.archive', entityType: 'numberingProfile', entityId: id,
+            correlationId: r.correlationId,
+            metadata: {
+              name: profile.name, unit: profile.owner.code, committee: profile.committee?.code ?? null,
+              reason: 'delete-with-history', letterCount,
+            },
+          })
+        })
+      }
+      return ok({ archived: true, deleted: false, letterCount })
     }
 
+    // Belum pernah dipakai → hapus permanen.
     await db.$transaction(async (tx) => {
       await tx.numberingProfileVersion.deleteMany({ where: { profileId: id } })
       await tx.numberingProfile.delete({ where: { id } })
       await writeAudit(tx, {
         actorId: r.user.id, action: 'profile.delete', entityType: 'numberingProfile', entityId: id,
         correlationId: r.correlationId,
-        metadata: { name: profile.name, unit: profile.owner.code, committee: profile.committee?.code ?? null },
+        metadata: { name: profile.name, unit: profile.owner.code, committee: profile.committee?.code ?? null, hardDelete: true },
       })
     })
-    return ok({ deleted: true })
+    return ok({ archived: false, deleted: true, letterCount: 0 })
   })
 }

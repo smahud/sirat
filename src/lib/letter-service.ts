@@ -104,6 +104,17 @@ export async function issueLetter(params: {
         // 4) Profil aktif (v1.8 multi-profil): surat boleh memilih profil eksplisit
         //   (numberingProfileId) — versi ACTIVE profil itulah yang dipakai. Tanpa
         //   pilihan (surat lama): profil kepanitiaan dulu, lalu profil unit.
+        //   v1.9: profil terarsip tidak bisa menerbitkan — pesan spesifik agar
+        //   operator tahu harus ganti profil pada draft (bkan sekadar "tidak aktif").
+        if (letter.numberingProfileId) {
+          const chosenProfile = await tx.numberingProfile.findUnique({
+            where: { id: letter.numberingProfileId },
+          })
+          if (chosenProfile?.archivedAt) {
+            throw new ServiceError(409, 'PROFILE_ARCHIVED',
+              `Profil penomoran "${chosenProfile.name}" sudah diarsipkan — ubah draft ini dan pilih profil lain (menu Surat → Ubah Draft)`)
+          }
+        }
         const activeVersion = await resolveActiveVersionForLetter(tx, letter)
         if (!activeVersion) {
           throw new ServiceError(409, 'NO_ACTIVE_PROFILE', letter.numberingProfileId
@@ -151,9 +162,13 @@ export async function issueLetter(params: {
         )
 
         // 7) Counter atomik (upsert single-statement + unique constraint)
+        //    v1.9: counter BARU (namespace/periode belum pernah terbit) mulai dari
+        //    startCounter profil (default 1) — mendukung nomor terusan dari sistem
+        //    lama. Counter yang sudah ada lanjut dari nilai terakhir (terusan alami).
+        const startCounter = Math.max(1, Math.min(9_999_999, dsl.policy?.startCounter ?? 1))
         const counter = await tx.counter.upsert({
           where: { namespaceId_periodKey: { namespaceId: ns.id, periodKey } },
-          create: { namespaceId: ns.id, periodKey, lastValue: 1 },
+          create: { namespaceId: ns.id, periodKey, lastValue: startCounter },
           update: { lastValue: { increment: 1 } },
         })
         const seq = counter.lastValue

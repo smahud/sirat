@@ -163,6 +163,7 @@ model NumberingProfile {
   owner       Unit     @relation(fields: [ownerId], references: [id])
   committeeId String? // v1.8: satu konteks boleh punya BEBERAPA profil (unit maupun kepanitiaan)
   committee   Committee? @relation(fields: [committeeId], references: [id])
+  archivedAt  DateTime? // v1.9: terisi = profil diarsipkan (disembunyikan, bisa dipulihkan)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

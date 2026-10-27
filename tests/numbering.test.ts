@@ -356,3 +356,39 @@ describe('utilitas domain & helper builder', () => {
     expect(fieldUsedInNumber(d, 'arah_surat')).toBe(false)
   })
 })
+
+describe('kebijakan counter v1.9 (startCounter / reset)', () => {
+  it('policy.startCounter diterima (default absen = mulai 1)', () => {
+    const d = structuredClone(BASE)
+    d.policy = { resetPolicy: 'YEARLY', dateSource: 'LETTER_DATE', startCounter: 25 }
+    expect(dslSchema.parse(d).policy?.startCounter).toBe(25)
+    const tanpaPolicy = dslSchema.parse(BASE)
+    expect(tanpaPolicy.policy?.startCounter ?? 1).toBe(1)
+  })
+  it('menolak startCounter tidak sah (0 / pecahan / di atas batas)', () => {
+    for (const bad of [0, -3, 1.5, 10_000_000]) {
+      const d = structuredClone(BASE)
+      d.policy = { startCounter: bad }
+      expect(() => dslSchema.parse(d)).toThrow()
+    }
+  })
+  it('render dengan seq terusan: startCounter 25 → 025 (padding 3)', () => {
+    const r = renderNumber(BASE, { ...CTX, seq: 25 })
+    expect(r.text).toBe('025/A/SPR/YAPSI-DS/X/2026')
+  })
+  it('periodKeyFor: YEARLY ikut tahun surat; MONTHLY ikut bulan-tahun', () => {
+    expect(periodKeyFor('YEARLY', 'LETTER_DATE', new Date('2026-10-13T00:00:00Z'), new Date()))
+      .toBe('2026')
+    expect(periodKeyFor('MONTHLY', 'LETTER_DATE', new Date('2026-10-13T00:00:00Z'), new Date()))
+      .toBe('2026-10')
+    expect(periodKeyFor('ALL', 'LETTER_DATE', new Date('2026-10-13T00:00:00Z'), new Date()))
+      .toBe('ALL')
+  })
+  it('parseDsl mempertahankan startCounter lintas simpan/muat', () => {
+    const d = structuredClone(BASE)
+    d.policy = { resetPolicy: 'MONTHLY', dateSource: 'ISSUE_DATE', startCounter: 131 }
+    const muat = parseDsl(JSON.stringify(d))
+    expect(muat.policy?.startCounter).toBe(131)
+    expect(muat.policy?.resetPolicy).toBe('MONTHLY')
+  })
+})
